@@ -6,6 +6,7 @@ import (
 )
 
 var cmdname = "ltboss"
+var cmdpath = ""
 
 func main() {
 	cmdname = os.Args[0]
@@ -14,6 +15,13 @@ func main() {
 		help(nil)
 	} else if os.Args[1] == "help" {
 		help(os.Args[1:])
+	}
+
+	var err error
+	cmdpath, err = os.Executable()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: cannot find executable path: %v", cmdname, err)
+		os.Exit(1)
 	}
 
 	for _, cmd := range commands {
