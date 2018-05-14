@@ -7,7 +7,7 @@ import (
 type Request struct {
 	Type string `json:"type"`
 
-	// Type == "start"
+	// Type == "start" || Type == "reload"
 	Binary string   `json:"binary,omitempty"`
 	Args   []string `json:"args,omitempty"`
 
@@ -32,7 +32,10 @@ type StartResponse struct {
 }
 
 type StopResponse struct {
-	InterruptFailed bool `json:"interrupt_failed,omitempty"`
-	Forced          bool `json:"forced,omitempty"` // timeout expired, process killed
-	ExitCode        int  `json:"exit_code"`
+	Forced   bool `json:"forced,omitempty"` // timeout expired, process killed
+	ExitCode int  `json:"exit_code"`
+}
+
+type ReloadResponse struct {
+	StopResponse
 }

@@ -79,3 +79,21 @@ func (c *Client) Stop(timeout time.Duration) (*lbrpc.StopResponse, error) {
 	}
 	return res, nil
 }
+
+func (c *Client) Reload(binpath string, args []string, timeout time.Duration) (*lbrpc.ReloadResponse, error) {
+	c.conn.SetDeadline(time.Now().Add(1*time.Second + timeout))
+	req := lbrpc.Request{
+		Type:    "reload",
+		Binary:  binpath,
+		Args:    args,
+		Timeout: timeout,
+	}
+	if err := c.w.Encode(req); err != nil {
+		return nil, fmt.Errorf("start: %v", err)
+	}
+	res := new(lbrpc.ReloadResponse)
+	if err := c.r.Decode(res); err != nil {
+		return nil, fmt.Errorf("start: %v", err)
+	}
+	return res, nil
+}

@@ -153,6 +153,8 @@ func handler(conn *net.UnixConn) {
 		case "stop":
 			res, err = handleStop(&req)
 			defer exit(0)
+		case "reload":
+			res, err = handleReload(&req)
 		default:
 			err = fmt.Errorf("unknown request type: %q", req.Type)
 		}
@@ -162,6 +164,9 @@ func handler(conn *net.UnixConn) {
 			return
 		}
 		if w.Encode(res) != nil {
+			return
+		}
+		if req.Type == "stop" {
 			return
 		}
 	}
@@ -214,12 +219,16 @@ func handleStartLocked(req *lbrpc.Request) (interface{}, error) {
 		state.mu.Lock()
 		state.serviceProc = nil
 		state.exitCode = code
-		if state.exitDone != nil {
-			close(state.exitDone)
-			state.exitDone = nil
-		}
+		exitDone := state.exitDone
+		state.exitDone = nil
 		state.mu.Unlock()
 
+		if exitDone != nil {
+			close(exitDone)
+			return
+		}
+
+		// Restart the service.
 		go func() {
 			select {
 			case <-state.ctx.Done():
@@ -247,27 +256,18 @@ func handleStartLocked(req *lbrpc.Request) (interface{}, error) {
 	}, nil
 }
 
-func handleStop(req *lbrpc.Request) (interface{}, error) {
-	select {
-	case <-state.ctx.Done():
-		return nil, fmt.Errorf("service already stopping")
-	default:
-	}
-	state.cancelFn()
-
-	res := new(lbrpc.StopResponse)
-
+func killService(timeout time.Duration) (forced bool, err error) {
 	state.mu.Lock()
 	if state.serviceProc == nil {
 		state.mu.Unlock()
-		return nil, fmt.Errorf("service not running")
+		return false, fmt.Errorf("service not running")
 	}
 	exitDone := make(chan struct{})
 	state.exitDone = exitDone
-	timeout := req.Timeout
-	err := state.serviceProc.Signal(syscall.SIGINT)
-	if err != nil {
-		res.InterruptFailed = true
+	if timeout == 0 {
+		timeout = 2 * time.Second
+	}
+	if err := state.serviceProc.Signal(syscall.SIGINT); err != nil {
 		timeout = 0 // no point waiting
 	}
 	state.mu.Unlock()
@@ -277,7 +277,7 @@ func handleStop(req *lbrpc.Request) (interface{}, error) {
 		// process still running, force it out
 		state.mu.Lock()
 		if state.serviceProc != nil {
-			res.Forced = true
+			forced = true
 			state.serviceProc.Kill()
 		}
 		state.mu.Unlock()
@@ -290,9 +290,57 @@ func handleStop(req *lbrpc.Request) (interface{}, error) {
 		// process exited cleanly from lame duck
 	}
 
+	return forced, nil
+}
+
+func handleStop(req *lbrpc.Request) (interface{}, error) {
+	select {
+	case <-state.ctx.Done():
+		return nil, fmt.Errorf("service already stopping")
+	default:
+	}
+	state.cancelFn()
+
+	res := new(lbrpc.StopResponse)
+
+	forced, err := killService(req.Timeout)
+	if err != nil {
+		return nil, err
+	}
+	res.Forced = forced
+
 	state.mu.Lock()
 	res.ExitCode = state.exitCode
 	state.mu.Unlock()
+
+	return res, nil
+}
+
+func handleReload(req *lbrpc.Request) (interface{}, error) {
+	select {
+	case <-state.ctx.Done():
+		return nil, fmt.Errorf("service is stopping")
+	default:
+	}
+
+	res := new(lbrpc.ReloadResponse)
+
+	forced, err := killService(req.Timeout)
+	if err != nil {
+		return nil, err
+	}
+	res.Forced = forced
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	if state.serviceProc != nil {
+		return nil, fmt.Errorf("reload interrupted")
+	}
+
+	if _, err := handleStartLocked(req); err != nil {
+		return nil, err
+	}
 
 	return res, nil
 }

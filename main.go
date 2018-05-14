@@ -70,7 +70,7 @@ var commands = []command{
 		oneLiner: "replace a running service with a new process",
 		usage:    `reload [-timeout duration] [service flags] servicename`,
 		docs:     "TODO",
-		run:      func(args []string) { fmt.Printf("TODO reload\n") },
+		run:      reload,
 	},
 	{
 		name:     "show",
