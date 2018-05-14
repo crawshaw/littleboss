@@ -3,6 +3,8 @@ package main // import "crawshaw.io/ltboss"
 import (
 	"fmt"
 	"os"
+
+	"crawshaw.io/ltboss/daemon"
 )
 
 var cmdname = "ltboss"
@@ -15,6 +17,8 @@ func main() {
 		help(nil)
 	} else if os.Args[1] == "help" {
 		help(os.Args[1:])
+	} else if os.Args[1] == "-daemon" {
+		daemon.Main()
 	}
 
 	var err error
@@ -76,6 +80,6 @@ var commands = []command{
 		oneLiner: "list services",
 		usage:    `ls [pattern]`,
 		docs:     "TODO",
-		run:      func(args []string) { fmt.Printf("TODO ls\n") },
+		run:      ls,
 	},
 }

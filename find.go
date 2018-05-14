@@ -1,69 +1,79 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
-	"fmt"
 	"log"
-	"os/exec"
-	"regexp"
-	"strconv"
+	"os"
+	"path/filepath"
+	"strings"
+	"syscall"
+
+	"crawshaw.io/ltboss/rpc"
 )
 
-func FindDaemons(cmdpath string) (daemons []DaemonInfo, err error) {
-	cmd := exec.Command("ps", "-x", "-o", "pid command")
-	out, err := cmd.CombinedOutput()
+func FindDaemons() (clients []*rpc.Client, err error) {
+	var socketpaths []string
+	uid, gid := syscall.Getuid(), syscall.Getgid()
+	tempDir, err := os.Open(os.TempDir())
 	if err != nil {
-		return nil, fmt.Errorf("FindDaemons: ps failed: %v (%s)", err, out)
+		return nil, err
 	}
-	return parsePS(cmdpath, out)
-}
-
-type DaemonInfo struct {
-	PID         int
-	ServiceName string
-	SocketPath  string
-}
-
-func parsePS(cmdpath string, b []byte) (daemons []DaemonInfo, err error) {
-	scanner := bufio.NewScanner(bytes.NewReader(b))
-	for scanner.Scan() {
-		if dinfo := parsePSLine(cmdpath, scanner.Bytes()); dinfo != nil {
-			daemons = append(daemons, *dinfo)
+	fis, err := tempDir.Readdir(-1)
+	if err != nil {
+		return nil, err
+	}
+	for _, fi := range fis {
+		if !strings.HasPrefix(fi.Name(), "ltboss-") || !fi.IsDir() {
+			continue
 		}
-	}
-	if scanner.Err() != nil {
-		return nil, fmt.Errorf("psinfo: cannot parse ps output: %v", err)
-	}
-	return daemons, nil
-}
-
-var daemonArgsRE = regexp.MustCompile(`^-daemon -name=([A-Za-z0-9\-_]*) -socketpath=([A-Za-z0-9/.\-_]*)`)
-
-func parsePSLine(cmdpath string, b []byte) *DaemonInfo {
-	dinfo := &DaemonInfo{}
-
-	if i := bytes.IndexByte(b, ' '); i < 1 {
-		return nil
-	} else {
-		pid, err := strconv.Atoi(string(b[:i]))
+		if stat := fi.Sys().(*syscall.Stat_t); int(stat.Uid) != uid || int(stat.Gid) != gid {
+			log.Printf("%s has bad UID/GID %d/%d, want %d/%d", filepath.Join(os.TempDir(), fi.Name()), stat.Uid, stat.Gid, uid, gid)
+			continue
+		}
+		if fi.Mode().Perm() != 0700 {
+			log.Printf("%s has bad permissions: %s, want 0700", filepath.Join(os.TempDir(), fi.Name()), fi.Mode().Perm(), gid)
+			continue
+		}
+		dir, err := os.Open(filepath.Join(os.TempDir(), fi.Name()))
 		if err != nil {
-			return nil
+			log.Print(err)
+			continue
 		}
-		dinfo.PID = int(pid)
-		b = b[i+1:]
+		dirFIs, err := dir.Readdir(1)
+		dir.Close()
+		if err != nil {
+			log.Print(err)
+			continue
+		}
+		if len(dirFIs) == 0 {
+			log.Printf("%s: no socket file", filepath.Join(os.TempDir(), fi.Name()))
+			continue
+		}
+		ffi := dirFIs[0]
+		if !strings.HasPrefix(ffi.Name(), "ltbossd.") {
+			continue
+		}
+		if ffi.Mode()&os.ModeSocket != os.ModeSocket {
+			log.Printf("%s: not a socket", filepath.Join(os.TempDir(), fi.Name(), ffi.Name()))
+			continue
+		}
+		socketpaths = append(socketpaths, filepath.Join(os.TempDir(), fi.Name(), ffi.Name()))
 	}
 
-	if len(b) <= len(cmdpath) || string(b[:len(cmdpath)]) != cmdpath {
-		return nil // typical case, this is not an ltboss daemon
+	ch := make(chan *rpc.Client, len(socketpaths))
+	for _, socketpath := range socketpaths {
+		go func(socketpath string) {
+			c, err := rpc.NewClient(socketpath)
+			if err != nil {
+				log.Printf("%s: %v", socketpath, err)
+			}
+			ch <- c
+		}(socketpath)
 	}
-	b = b[len(cmdpath)+1:]
-	m := daemonArgsRE.FindSubmatch(b)
-	if m == nil {
-		log.Printf("parsePSLine: no match %q", b)
-		return nil
+	for range socketpaths {
+		if s := <-ch; s != nil {
+			clients = append(clients, s)
+		}
 	}
-	dinfo.ServiceName = string(m[1])
-	dinfo.SocketPath = string(m[2])
-	return dinfo
+
+	return clients, nil
 }
