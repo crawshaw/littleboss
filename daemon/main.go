@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"crawshaw.io/littleboss/rpc"
+	"crawshaw.io/littleboss/lbrpc"
 )
 
 var flagSet = flag.NewFlagSet("daemon flags", 0)
@@ -126,7 +126,7 @@ func handler(conn *net.UnixConn) {
 	// TODO: consider SO_PEERCRED for double-checking the uid, and pids in logs
 
 	for {
-		var req rpc.Request
+		var req lbrpc.Request
 		if err := r.Decode(&req); err != nil {
 			log.Printf("connection closed: %v", err)
 			break
@@ -142,7 +142,7 @@ func handler(conn *net.UnixConn) {
 			err = fmt.Errorf("unknown request type: %q", req.Type)
 		}
 		if err != nil {
-			w.Encode(rpc.ErrResponse{Error: err.Error()})
+			w.Encode(lbrpc.ErrResponse{Error: err.Error()})
 			log.Printf("closing on error: %v", err)
 			return
 		}
@@ -152,11 +152,11 @@ func handler(conn *net.UnixConn) {
 	}
 }
 
-func handlerInfo(req *rpc.Request) (interface{}, error) {
+func handlerInfo(req *lbrpc.Request) (interface{}, error) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	res := rpc.InfoResponse{
+	res := lbrpc.InfoResponse{
 		ServiceName: *flagName,
 		BossStart:   state.bossStart,
 		BossPID:     state.bossPID,
@@ -165,7 +165,7 @@ func handlerInfo(req *rpc.Request) (interface{}, error) {
 	return res, nil
 }
 
-func handlerStart(req *rpc.Request) (interface{}, error) {
+func handlerStart(req *lbrpc.Request) (interface{}, error) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
@@ -179,7 +179,7 @@ func handlerStart(req *rpc.Request) (interface{}, error) {
 	}
 	state.serviceProc = cmd.Process
 
-	return &rpc.StartResponse{
+	return &lbrpc.StartResponse{
 		ServicePID: state.serviceProc.Pid,
 	}, nil
 }

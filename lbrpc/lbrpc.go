@@ -1,4 +1,4 @@
-package rpc // import "crawshaw.io/littleboss/rpc"
+package lbrpc // import "crawshaw.io/littleboss/lbrpc"
 
 import (
 	"encoding/json"

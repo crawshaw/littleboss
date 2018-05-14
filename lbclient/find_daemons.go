@@ -1,4 +1,4 @@
-package main
+package lbclient // import "crawshaw.io/littleboss/lbclient"
 
 import (
 	"log"
@@ -7,10 +7,10 @@ import (
 	"strings"
 	"syscall"
 
-	"crawshaw.io/littleboss/rpc"
+	"crawshaw.io/littleboss/lbrpc"
 )
 
-func FindDaemons() (clients []*rpc.Client, err error) {
+func FindDaemons() (clients []*lbrpc.Client, err error) {
 	var socketpaths []string
 	uid, gid := syscall.Getuid(), syscall.Getgid()
 	tempDir, err := os.Open(os.TempDir())
@@ -59,10 +59,10 @@ func FindDaemons() (clients []*rpc.Client, err error) {
 		socketpaths = append(socketpaths, filepath.Join(os.TempDir(), fi.Name(), ffi.Name()))
 	}
 
-	ch := make(chan *rpc.Client, len(socketpaths))
+	ch := make(chan *lbrpc.Client, len(socketpaths))
 	for _, socketpath := range socketpaths {
 		go func(socketpath string) {
-			c, err := rpc.NewClient(socketpath)
+			c, err := lbrpc.NewClient(socketpath)
 			if err != nil {
 				log.Printf("%s: %v", socketpath, err)
 			}

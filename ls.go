@@ -6,11 +6,12 @@ import (
 	"os"
 	"sort"
 
-	"crawshaw.io/littleboss/rpc"
+	"crawshaw.io/littleboss/lbclient"
+	"crawshaw.io/littleboss/lbrpc"
 )
 
-func requestInfos(clients []*rpc.Client) []*rpc.InfoResponse {
-	ch := make(chan *rpc.InfoResponse, len(clients))
+func requestInfos(clients []*lbrpc.Client) []*lbrpc.InfoResponse {
+	ch := make(chan *lbrpc.InfoResponse, len(clients))
 	for _, client := range clients {
 		client := client
 		go func() {
@@ -21,7 +22,7 @@ func requestInfos(clients []*rpc.Client) []*rpc.InfoResponse {
 			ch <- info
 		}()
 	}
-	var infos []*rpc.InfoResponse
+	var infos []*lbrpc.InfoResponse
 	for range clients {
 		if info := <-ch; info != nil {
 			infos = append(infos, info)
@@ -32,7 +33,7 @@ func requestInfos(clients []*rpc.Client) []*rpc.InfoResponse {
 }
 
 func ls(args []string) {
-	clients, err := FindDaemons()
+	clients, err := lbclient.FindDaemons()
 	if err != nil {
 		fatalf("ls: %v\n", err)
 	}

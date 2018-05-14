@@ -11,7 +11,8 @@ import (
 	"strconv"
 	"strings"
 
-	"crawshaw.io/littleboss/rpc"
+	"crawshaw.io/littleboss/lbclient"
+	"crawshaw.io/littleboss/lbrpc"
 )
 
 func start(args []string) {
@@ -34,7 +35,7 @@ func start(args []string) {
 
 	name := *flagName
 	if name == "" {
-		clients, err := FindDaemons()
+		clients, err := lbclient.FindDaemons()
 		if err != nil {
 			fatalf("start: survey: %v\n", err)
 		}
@@ -57,7 +58,7 @@ func start(args []string) {
 
 	cmd := exec.Command(cmdpath, "-daemon", "-name="+name)
 	cmd.Stdout = w
-	cmd.Stderr = os.Stderr // TODO remove
+	//cmd.Stderr = os.Stderr // TODO remove
 	if err := cmd.Start(); err != nil {
 		fatalf("%v", err)
 	}
@@ -76,8 +77,10 @@ func start(args []string) {
 	if err != nil {
 		fatalf("bad daemon output: %v: %q", err, sockFileStr)
 	}
+	r.Close()
+	w.Close()
 
-	c, err := rpc.NewClient(socketpath)
+	c, err := lbrpc.NewClient(socketpath)
 	if err != nil {
 		fatalf("%v", err)
 	}
