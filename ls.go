@@ -10,7 +10,7 @@ import (
 	"crawshaw.io/littleboss/lbrpc"
 )
 
-func requestInfos(clients []*lbrpc.Client) []*lbrpc.InfoResponse {
+func requestInfos(clients []*lbclient.Client) []*lbrpc.InfoResponse {
 	ch := make(chan *lbrpc.InfoResponse, len(clients))
 	for _, client := range clients {
 		client := client

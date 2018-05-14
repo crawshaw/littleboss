@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"crawshaw.io/littleboss/lbclient"
-	"crawshaw.io/littleboss/lbrpc"
 )
 
 func start(args []string) {
@@ -80,7 +79,7 @@ func start(args []string) {
 	r.Close()
 	w.Close()
 
-	c, err := lbrpc.NewClient(socketpath)
+	c, err := lbclient.NewClient(socketpath)
 	if err != nil {
 		fatalf("%v", err)
 	}
