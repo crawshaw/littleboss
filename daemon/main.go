@@ -1,6 +1,7 @@
 package daemon // import "crawshaw.io/littleboss/daemon"
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"flag"
@@ -21,25 +22,36 @@ import (
 var flagSet = flag.NewFlagSet("daemon flags", 0)
 var flagName = flagSet.String("name", "", "service name")
 
-var state = struct {
+var state struct {
+	ctx      context.Context
+	cancelFn func()
+
 	mu           sync.Mutex
 	bossStart    time.Time
 	bossPID      int
 	serviceStart time.Time
 	serviceProc  *os.Process
-}{
-	bossStart: time.Now(),
-	bossPID:   int(syscall.Getpid()),
+	exitDone     chan struct{} // closed when process closes, exitCode avail
+	exitCode     int
 }
 
 var socketpath = ""
 var socketln *net.UnixListener
 
 func Main() {
+	state.ctx, state.cancelFn = context.WithCancel(context.Background())
+
+	state.mu.Lock()
+	state.bossStart = time.Now()
+	state.bossPID = int(syscall.Getpid())
+	state.mu.Unlock()
+
 	if err := flagSetParse(); err != nil {
 		fmt.Fprintf(os.Stderr, "littleboss daemon: %v\n", err)
 		exit(1)
 	}
+	log.SetPrefix("littleboss:" + *flagName + ": ")
+
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -135,9 +147,12 @@ func handler(conn *net.UnixConn) {
 		var err error
 		switch req.Type {
 		case "info":
-			res, err = handlerInfo(&req)
+			res, err = handleInfo(&req)
 		case "start":
-			res, err = handlerStart(&req)
+			res, err = handleStart(&req)
+		case "stop":
+			res, err = handleStop(&req)
+			defer exit(0)
 		default:
 			err = fmt.Errorf("unknown request type: %q", req.Type)
 		}
@@ -152,7 +167,7 @@ func handler(conn *net.UnixConn) {
 	}
 }
 
-func handlerInfo(req *lbrpc.Request) (interface{}, error) {
+func handleInfo(req *lbrpc.Request) (interface{}, error) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
@@ -165,7 +180,7 @@ func handlerInfo(req *lbrpc.Request) (interface{}, error) {
 	return res, nil
 }
 
-func handlerStart(req *lbrpc.Request) (interface{}, error) {
+func handleStart(req *lbrpc.Request) (interface{}, error) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
@@ -173,13 +188,111 @@ func handlerStart(req *lbrpc.Request) (interface{}, error) {
 		return nil, fmt.Errorf("service already started")
 	}
 
+	return handleStartLocked(req)
+}
+
+func handleStartLocked(req *lbrpc.Request) (interface{}, error) {
+	state.serviceStart = time.Now()
 	cmd := exec.Command(req.Binary, req.Args...)
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
 	state.serviceProc = cmd.Process
 
+	go func() {
+		err := cmd.Wait()
+		code := 0
+		if err != nil {
+			if exErr, _ := err.(*exec.ExitError); exErr != nil {
+				code = exErr.Sys().(syscall.WaitStatus).ExitStatus()
+				log.Printf("exit code %d", code)
+			} else {
+				log.Printf("exit: %v", err)
+			}
+		}
+
+		state.mu.Lock()
+		state.serviceProc = nil
+		state.exitCode = code
+		if state.exitDone != nil {
+			close(state.exitDone)
+			state.exitDone = nil
+		}
+		state.mu.Unlock()
+
+		go func() {
+			select {
+			case <-state.ctx.Done():
+				return
+			case <-time.After(1 * time.Second):
+				state.mu.Lock()
+				defer state.mu.Unlock()
+
+				if state.serviceProc != nil {
+					// Manual user restart, disappear.
+					return
+				}
+
+				_, err := handleStartLocked(req)
+				if err != nil {
+					log.Printf("cannot restart service: %v", err)
+					exit(1)
+				}
+			}
+		}()
+	}()
+
 	return &lbrpc.StartResponse{
 		ServicePID: state.serviceProc.Pid,
 	}, nil
+}
+
+func handleStop(req *lbrpc.Request) (interface{}, error) {
+	select {
+	case <-state.ctx.Done():
+		return nil, fmt.Errorf("service already stopping")
+	default:
+	}
+	state.cancelFn()
+
+	res := new(lbrpc.StopResponse)
+
+	state.mu.Lock()
+	if state.serviceProc == nil {
+		state.mu.Unlock()
+		return nil, fmt.Errorf("service not running")
+	}
+	exitDone := make(chan struct{})
+	state.exitDone = exitDone
+	timeout := req.Timeout
+	err := state.serviceProc.Signal(syscall.SIGINT)
+	if err != nil {
+		res.InterruptFailed = true
+		timeout = 0 // no point waiting
+	}
+	state.mu.Unlock()
+
+	select {
+	case <-time.After(timeout):
+		// process still running, force it out
+		state.mu.Lock()
+		if state.serviceProc != nil {
+			res.Forced = true
+			state.serviceProc.Kill()
+		}
+		state.mu.Unlock()
+
+		select {
+		case <-exitDone:
+			// process has exited, exit code is available
+		}
+	case <-exitDone:
+		// process exited cleanly from lame duck
+	}
+
+	state.mu.Lock()
+	res.ExitCode = state.exitCode
+	state.mu.Unlock()
+
+	return res, nil
 }

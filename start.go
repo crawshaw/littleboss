@@ -20,7 +20,6 @@ func start(args []string) {
 	flagSet := flag.NewFlagSet("littleboss-start", 0)
 	flagName := flagSet.String("name", "", "service name")
 	// TODO: serviceflags
-
 	if err := flagSet.Parse(args); err != nil {
 		fatalf("%v", err)
 	}

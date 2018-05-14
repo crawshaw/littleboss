@@ -10,6 +10,9 @@ type Request struct {
 	// Type == "start"
 	Binary string   `json:"binary,omitempty"`
 	Args   []string `json:"args,omitempty"`
+
+	// Type == "stop" || Type == "reload"
+	Timeout time.Duration `json:"timeout,omitempty"`
 }
 
 type ErrResponse struct {
@@ -26,4 +29,10 @@ type InfoResponse struct {
 
 type StartResponse struct {
 	ServicePID int `json:"service_pid"`
+}
+
+type StopResponse struct {
+	InterruptFailed bool `json:"interrupt_failed,omitempty"`
+	Forced          bool `json:"forced,omitempty"` // timeout expired, process killed
+	ExitCode        int  `json:"exit_code"`
 }

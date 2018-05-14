@@ -61,9 +61,9 @@ var commands = []command{
 	{
 		name:     "stop",
 		oneLiner: "shut down a running service",
-		usage:    `stop servicename`,
+		usage:    `stop [-timeout duration] servicename`,
 		docs:     "TODO",
-		run:      func(args []string) { fmt.Printf("TODO stop\n") },
+		run:      stop,
 	},
 	{
 		name:     "reload",

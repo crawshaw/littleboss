@@ -8,6 +8,23 @@ import (
 	"syscall"
 )
 
+func FindDaemon(name string) (*Client, error) {
+	clients, err := FindDaemons()
+	if err != nil {
+		return nil, err
+	}
+	var client *Client
+	for _, c := range clients {
+		info, err := c.Info()
+		if err != nil || info.ServiceName != name {
+			c.Close()
+		} else {
+			client = c
+		}
+	}
+	return client, nil
+}
+
 func FindDaemons() (clients []*Client, err error) {
 	var socketpaths []string
 	uid, gid := syscall.Getuid(), syscall.Getgid()

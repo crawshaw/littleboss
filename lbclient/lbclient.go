@@ -31,6 +31,10 @@ func NewClient(socketpath string) (*Client, error) {
 	}, nil
 }
 
+func (c *Client) Close() error {
+	return c.conn.Close()
+}
+
 func (c *Client) Info() (*lbrpc.InfoResponse, error) {
 	c.conn.SetDeadline(time.Now().Add(1 * time.Second))
 	if err := c.w.Encode(lbrpc.Request{Type: "info"}); err != nil {
@@ -54,6 +58,22 @@ func (c *Client) Start(binpath string, args []string) (*lbrpc.StartResponse, err
 		return nil, fmt.Errorf("start: %v", err)
 	}
 	res := new(lbrpc.StartResponse)
+	if err := c.r.Decode(res); err != nil {
+		return nil, fmt.Errorf("start: %v", err)
+	}
+	return res, nil
+}
+
+func (c *Client) Stop(timeout time.Duration) (*lbrpc.StopResponse, error) {
+	c.conn.SetDeadline(time.Now().Add(1*time.Second + timeout))
+	req := lbrpc.Request{
+		Type:    "stop",
+		Timeout: timeout,
+	}
+	if err := c.w.Encode(req); err != nil {
+		return nil, fmt.Errorf("start: %v", err)
+	}
+	res := new(lbrpc.StopResponse)
 	if err := c.r.Decode(res); err != nil {
 		return nil, fmt.Errorf("start: %v", err)
 	}
