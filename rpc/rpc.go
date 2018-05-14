@@ -9,6 +9,10 @@ import (
 
 type Request struct {
 	Type string `json:"type"`
+
+	// Type == "start"
+	Binary string   `json:"binary,omitempty"`
+	Args   []string `json:"args,omitempty"`
 }
 
 type ErrResponse struct {
@@ -21,6 +25,10 @@ type InfoResponse struct {
 	ServiceStart time.Time `json:"service_start"`
 	BossPID      int       `json:"boss_pid"`
 	BossStart    time.Time `json:"boss_start"`
+}
+
+type StartResponse struct {
+	ServicePID int `json:"service_pid"`
 }
 
 type Client struct {
@@ -53,6 +61,23 @@ func (c *Client) Info() (*InfoResponse, error) {
 	res := new(InfoResponse)
 	if err := c.r.Decode(res); err != nil {
 		return nil, fmt.Errorf("info: %v", err)
+	}
+	return res, nil
+}
+
+func (c *Client) Start(binpath string, args []string) (*StartResponse, error) {
+	c.conn.SetDeadline(time.Now().Add(1 * time.Second))
+	req := Request{
+		Type:   "start",
+		Binary: binpath,
+		Args:   args,
+	}
+	if err := c.w.Encode(req); err != nil {
+		return nil, fmt.Errorf("start: %v", err)
+	}
+	res := new(StartResponse)
+	if err := c.r.Decode(res); err != nil {
+		return nil, fmt.Errorf("start: %v", err)
 	}
 	return res, nil
 }

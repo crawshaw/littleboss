@@ -9,13 +9,7 @@ import (
 	"crawshaw.io/littleboss/rpc"
 )
 
-func ls(args []string) {
-	clients, err := FindDaemons()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s ls: %v\n", cmdname, err)
-		os.Exit(1)
-	}
-
+func requestInfos(clients []*rpc.Client) []*rpc.InfoResponse {
 	ch := make(chan *rpc.InfoResponse, len(clients))
 	for _, client := range clients {
 		client := client
@@ -33,8 +27,17 @@ func ls(args []string) {
 			infos = append(infos, info)
 		}
 	}
-
 	sort.Slice(infos, func(i, j int) bool { return infos[i].ServiceName < infos[j].ServiceName })
+	return infos
+}
+
+func ls(args []string) {
+	clients, err := FindDaemons()
+	if err != nil {
+		fatalf("ls: %v\n", err)
+	}
+	infos := requestInfos(clients)
+
 	for _, info := range infos {
 		fmt.Printf("%s\n", info.ServiceName)
 	}

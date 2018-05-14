@@ -24,8 +24,7 @@ func main() {
 	var err error
 	cmdpath, err = os.Executable()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: cannot find executable path: %v", cmdname, err)
-		os.Exit(1)
+		fatalf("cannot find executable path: %v", err)
 	}
 
 	for _, cmd := range commands {
@@ -36,6 +35,11 @@ func main() {
 	}
 	fmt.Fprintf(os.Stderr, "%s: unknown subcommand %q\nRun '%s help' for usage.\n", cmdname, os.Args[1], cmdname)
 	os.Exit(2)
+}
+
+func fatalf(format string, args ...interface{}) {
+	fmt.Fprintf(os.Stderr, "%s: %s", cmdname, fmt.Sprintf(format, args...))
+	os.Exit(1)
 }
 
 type command struct {
@@ -52,7 +56,7 @@ var commands = []command{
 		oneLiner: "create a new service",
 		usage:    `start [-name servicename] [service flags] binpath [binflags]`,
 		docs:     "TODO",
-		run:      func(args []string) { fmt.Printf("TODO start\n") },
+		run:      start,
 	},
 	{
 		name:     "stop",
