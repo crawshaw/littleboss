@@ -1,4 +1,4 @@
-package daemon
+package daemon // import "crawshaw.io/littleboss/daemon"
 
 import (
 	"crypto/rand"
@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"crawshaw.io/ltboss/rpc"
+	"crawshaw.io/littleboss/rpc"
 )
 
 var flagSet = flag.NewFlagSet("daemon flags", 0)
@@ -89,7 +89,7 @@ func handlerInfo(w *json.Encoder, req *rpc.Request) error {
 
 func Main() {
 	if err := flagSetParse(); err != nil {
-		fmt.Fprintf(os.Stderr, "ltboss daemon: %v\n", err)
+		fmt.Fprintf(os.Stderr, "littleboss daemon: %v\n", err)
 		exit(1)
 	}
 	sigCh := make(chan os.Signal, 1)
@@ -102,25 +102,25 @@ func Main() {
 
 	dirID := make([]byte, 8)
 	if _, err := rand.Read(dirID); err != nil {
-		fmt.Fprintf(os.Stderr, "ltboss daemon: %v\n", err)
+		fmt.Fprintf(os.Stderr, "littleboss daemon: %v\n", err)
 		exit(1)
 	}
 
-	socketpath = filepath.Join(os.TempDir(), fmt.Sprintf("ltboss-%x/ltbossd.%d", dirID, syscall.Getpid()))
+	socketpath = filepath.Join(os.TempDir(), fmt.Sprintf("littleboss-%x/littleboss.%d", dirID, syscall.Getpid()))
 
 	if err := os.Mkdir(filepath.Dir(socketpath), 0700); err != nil {
-		fmt.Fprintf(os.Stderr, "ltboss daemon: %v\n", err)
+		fmt.Fprintf(os.Stderr, "littleboss daemon: %v\n", err)
 		exit(1)
 	}
 
 	addr, err := net.ResolveUnixAddr("unix", socketpath) // "unix" == SOCK_STREAM
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ltboss daemon: %v\n", err)
+		fmt.Fprintf(os.Stderr, "littleboss daemon: %v\n", err)
 		exit(1)
 	}
 	socketln, err = net.ListenUnix("unix", addr)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ltboss daemon: %v\n", err)
+		fmt.Fprintf(os.Stderr, "littleboss daemon: %v\n", err)
 		exit(1)
 	}
 	if f, _ := socketln.File(); f != nil {

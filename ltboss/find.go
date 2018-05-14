@@ -7,7 +7,7 @@ import (
 	"strings"
 	"syscall"
 
-	"crawshaw.io/ltboss/rpc"
+	"crawshaw.io/littleboss/rpc"
 )
 
 func FindDaemons() (clients []*rpc.Client, err error) {
@@ -22,7 +22,7 @@ func FindDaemons() (clients []*rpc.Client, err error) {
 		return nil, err
 	}
 	for _, fi := range fis {
-		if !strings.HasPrefix(fi.Name(), "ltboss-") || !fi.IsDir() {
+		if !strings.HasPrefix(fi.Name(), "littleboss-") || !fi.IsDir() {
 			continue
 		}
 		if stat := fi.Sys().(*syscall.Stat_t); int(stat.Uid) != uid || int(stat.Gid) != gid {
@@ -49,7 +49,7 @@ func FindDaemons() (clients []*rpc.Client, err error) {
 			continue
 		}
 		ffi := dirFIs[0]
-		if !strings.HasPrefix(ffi.Name(), "ltbossd.") {
+		if !strings.HasPrefix(ffi.Name(), "littleboss.") {
 			continue
 		}
 		if ffi.Mode()&os.ModeSocket != os.ModeSocket {

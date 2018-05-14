@@ -6,7 +6,7 @@ import (
 	"os"
 	"sort"
 
-	"crawshaw.io/ltboss/rpc"
+	"crawshaw.io/littleboss/rpc"
 )
 
 func ls(args []string) {

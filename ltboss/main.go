@@ -1,10 +1,10 @@
-package main // import "crawshaw.io/ltboss"
+package main // import "crawshaw.io/littleboss/ltboss"
 
 import (
 	"fmt"
 	"os"
 
-	"crawshaw.io/ltboss/daemon"
+	"crawshaw.io/littleboss/daemon"
 )
 
 var cmdname = "ltboss"
