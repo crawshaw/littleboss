@@ -1,4 +1,4 @@
-package main // import "crawshaw.io/littleboss/ltboss"
+package main // import "crawshaw.io/littleboss"
 
 import (
 	"fmt"
@@ -7,7 +7,7 @@ import (
 	"crawshaw.io/littleboss/daemon"
 )
 
-var cmdname = "ltboss"
+var cmdname = "littleboss"
 var cmdpath = ""
 
 func main() {

@@ -6,15 +6,15 @@ import (
 	"strings"
 )
 
-// help prints `ltboss help` messages and then exits the process.
+// help prints `littleboss help` messages and then exits the process.
 func help(args []string) {
 	switch len(args) {
-	case 0: // `ltboss`
+	case 0: // `littleboss`
 		helpcmds()
-	case 1: // `ltboss help`
+	case 1: // `littleboss help`
 		helpcmds()
 		os.Exit(0)
-	case 2: // `ltboss help foo`
+	case 2: // `littleboss help foo`
 		for _, cmd := range commands {
 			if cmd.name == args[1] {
 				helpcmd(cmd)
