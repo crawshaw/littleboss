@@ -26,13 +26,15 @@ var state struct {
 	ctx      context.Context
 	cancelFn func()
 
-	mu           sync.Mutex
-	bossStart    time.Time
-	bossPID      int
-	serviceStart time.Time
-	serviceProc  *os.Process
-	exitDone     chan struct{} // closed when process closes, exitCode avail
-	exitCode     int
+	mu            sync.Mutex
+	bossStart     time.Time
+	bossPID       int
+	serviceStart  time.Time
+	serviceProc   *os.Process
+	serviceBinary string
+	serviceArgs   []string
+	exitDone      chan struct{} // closed when process closes, exitCode avail
+	exitCode      int
 }
 
 var socketpath = ""
@@ -177,9 +179,13 @@ func handleInfo(req *lbrpc.Request) (interface{}, error) {
 	defer state.mu.Unlock()
 
 	res := lbrpc.InfoResponse{
-		ServiceName: *flagName,
-		BossStart:   state.bossStart,
-		BossPID:     state.bossPID,
+		Name:      *flagName,
+		PID:       0, // TODO
+		Start:     state.serviceStart,
+		Binary:    state.serviceBinary,
+		Args:      state.serviceArgs,
+		BossStart: state.bossStart,
+		BossPID:   state.bossPID,
 	}
 
 	return res, nil
@@ -198,11 +204,14 @@ func handleStart(req *lbrpc.Request) (interface{}, error) {
 
 func handleStartLocked(req *lbrpc.Request) (interface{}, error) {
 	state.serviceStart = time.Now()
+	log.Printf("start %s %v", req.Binary, req.Args)
 	cmd := exec.Command(req.Binary, req.Args...)
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
 	state.serviceProc = cmd.Process
+	state.serviceBinary = req.Binary
+	state.serviceArgs = req.Args
 
 	go func() {
 		err := cmd.Wait()
@@ -234,19 +243,20 @@ func handleStartLocked(req *lbrpc.Request) (interface{}, error) {
 			case <-state.ctx.Done():
 				return
 			case <-time.After(1 * time.Second):
-				state.mu.Lock()
-				defer state.mu.Unlock()
+			}
 
-				if state.serviceProc != nil {
-					// Manual user restart, disappear.
-					return
-				}
+			state.mu.Lock()
+			defer state.mu.Unlock()
 
-				_, err := handleStartLocked(req)
-				if err != nil {
-					log.Printf("cannot restart service: %v", err)
-					exit(1)
-				}
+			if state.serviceProc != nil {
+				// Manual user restart, disappear.
+				return
+			}
+
+			_, err := handleStartLocked(req)
+			if err != nil {
+				log.Printf("cannot restart service: %v", err)
+				exit(1)
 			}
 		}()
 	}()

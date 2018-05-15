@@ -20,11 +20,13 @@ type ErrResponse struct {
 }
 
 type InfoResponse struct {
-	ServiceName  string    `json:"service_name"`
-	ServicePID   int       `json:"service_pid"`
-	ServiceStart time.Time `json:"service_start"`
-	BossPID      int       `json:"boss_pid"`
-	BossStart    time.Time `json:"boss_start"`
+	Name      string    `json:"name"`
+	PID       int       `json:"pid"`
+	Start     time.Time `json:"start"`
+	Binary    string    `json:"binary"`
+	Args      []string  `json:"args"`
+	BossPID   int       `json:"boss_pid"`
+	BossStart time.Time `json:"boss_start"`
 }
 
 type StartResponse struct {

@@ -28,7 +28,17 @@ func requestInfos(clients []*lbclient.Client) []*lbrpc.InfoResponse {
 			infos = append(infos, info)
 		}
 	}
-	sort.Slice(infos, func(i, j int) bool { return infos[i].ServiceName < infos[j].ServiceName })
+	sort.Slice(infos, func(i, j int) bool {
+		// Names should be unique.
+		// But this an awful place to rely on the assumption,
+		// because if they are not subsequent runs of commands
+		// will act on different daemons.
+		// So play it safe.
+		if infos[i].Name != infos[j].Name {
+			return infos[i].Name < infos[j].Name
+		}
+		return infos[i].BossStart.Before(infos[j].BossStart)
+	})
 	return infos
 }
 
@@ -40,7 +50,7 @@ func ls(args []string) {
 	infos := requestInfos(clients)
 
 	for _, info := range infos {
-		fmt.Printf("%s\n", info.ServiceName)
+		fmt.Printf("%s\n", info.Name)
 	}
 	os.Exit(0)
 }

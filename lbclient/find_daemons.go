@@ -1,6 +1,7 @@
 package lbclient // import "crawshaw.io/littleboss/lbclient"
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -16,11 +17,14 @@ func FindDaemon(name string) (*Client, error) {
 	var client *Client
 	for _, c := range clients {
 		info, err := c.Info()
-		if err != nil || info.ServiceName != name {
+		if err != nil || info.Name != name {
 			c.Close()
 		} else {
 			client = c
 		}
+	}
+	if client == nil {
+		return nil, fmt.Errorf("service %q not found", name)
 	}
 	return client, nil
 }

@@ -77,7 +77,7 @@ var commands = []command{
 		oneLiner: "details about a running service",
 		usage:    `show [service name]`,
 		docs:     "TODO",
-		run:      func(args []string) { fmt.Printf("TODO show\n") },
+		run:      show,
 	},
 	{
 		name:     "ls",

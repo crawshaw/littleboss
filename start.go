@@ -40,7 +40,7 @@ func start(args []string) {
 		names := make(map[string]bool)
 		infos := requestInfos(clients)
 		for _, info := range infos {
-			names[info.ServiceName] = true
+			names[info.Name] = true
 		}
 
 		name = filepath.Base(binpath)
@@ -56,7 +56,7 @@ func start(args []string) {
 
 	cmd := exec.Command(cmdpath, "-daemon", "-name="+name)
 	cmd.Stdout = w
-	//cmd.Stderr = os.Stderr // TODO remove
+	cmd.Stderr = os.Stderr // TODO remove
 	if err := cmd.Start(); err != nil {
 		fatalf("%v", err)
 	}
