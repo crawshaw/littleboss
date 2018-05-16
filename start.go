@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"flag"
 	"fmt"
 	"log"
@@ -10,7 +11,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
+	"crawshaw.io/littleboss/daemon"
 	"crawshaw.io/littleboss/lbclient"
 )
 
@@ -19,6 +22,7 @@ func start(args []string) {
 
 	flagSet := flag.NewFlagSet("littleboss-start", 0)
 	flagName := flagSet.String("name", "", "service name")
+	flagDetach := flagSet.Bool("detach", false, "start service detached from shell")
 	// TODO: serviceflags
 	if err := flagSet.Parse(args); err != nil {
 		fatalf("%v", err)
@@ -49,23 +53,35 @@ func start(args []string) {
 		}
 	}
 
+	if *flagDetach {
+		startDetached(name, binpath, args)
+	} else {
+		daemon.Main(name, binpath, args, false)
+	}
+}
+
+func startDetached(name, binpath string, args []string) {
 	r, w, err := os.Pipe()
 	if err != nil {
 		fatalf("%v", err)
 	}
 
-	cmd := exec.Command(cmdpath, "-daemon", "-name="+name)
+	stderr := new(bytes.Buffer)
+
+	cmd := exec.Command(cmdpath, "-daemon", name, binpath)
+	cmd.Args = append(cmd.Args, args...)
 	cmd.Stdout = w
-	cmd.Stderr = os.Stderr // TODO remove
+	cmd.Stderr = os.Stderr //stderr
 	if err := cmd.Start(); err != nil {
 		fatalf("%v", err)
 	}
 
+	r.SetReadDeadline(time.Now().Add(2 * time.Second))
 	sockFileStr, err := bufio.NewReader(r).ReadString('\n')
 	if err != nil {
+		os.Stderr.Write(stderr.Bytes())
 		fatalf("bad daemon read: %v", err)
 	}
-	log.Print(sockFileStr)
 	const prefix = `LITTLEBOSS_SOCK_FILE=`
 	if !strings.HasPrefix(sockFileStr, prefix) {
 		fatalf("bad daemon output: %q", sockFileStr)
@@ -78,14 +94,16 @@ func start(args []string) {
 	r.Close()
 	w.Close()
 
+	log.Printf("connecting to %q", socketpath)
 	c, err := lbclient.NewClient(socketpath)
 	if err != nil {
+		os.Stderr.Write(stderr.Bytes())
 		fatalf("%v", err)
 	}
 
-	c.Start(binpath, args)
-
-	fmt.Println(c.Info())
-
+	if _, err := c.Info(); err != nil {
+		os.Stderr.Write(stderr.Bytes())
+		fatalf("%v", err)
+	}
 	os.Exit(0)
 }

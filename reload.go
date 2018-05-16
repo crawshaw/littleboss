@@ -22,10 +22,9 @@ func reload(args []string) {
 	if len(args) == 0 {
 		fatalf("no service executable provided")
 	}
-	binpath := args[0]
-	args = args[1:]
+	name, binpath, args := args[0], args[1], args[2:]
 
-	client, err := lbclient.FindDaemon(args[0])
+	client, err := lbclient.FindDaemon(name)
 	if err != nil {
 		fatalf("stop: %v", err)
 	}

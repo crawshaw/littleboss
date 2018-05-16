@@ -5,9 +5,10 @@ import (
 )
 
 type Request struct {
+	// Type == "reload", "stop", or "info"
 	Type string `json:"type"`
 
-	// Type == "start" || Type == "reload"
+	// Type == "reload"
 	Binary string   `json:"binary,omitempty"`
 	Args   []string `json:"args,omitempty"`
 

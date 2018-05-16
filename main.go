@@ -18,7 +18,11 @@ func main() {
 	} else if os.Args[1] == "help" {
 		help(os.Args[1:])
 	} else if os.Args[1] == "-daemon" {
-		daemon.Main()
+		if len(os.Args) < 4 {
+			fatalf("-daemon requires name and binary path arguments")
+		}
+		name, binary, args := os.Args[2], os.Args[3], os.Args[4:]
+		daemon.Main(name, binary, args, true)
 	}
 
 	var err error
@@ -38,7 +42,7 @@ func main() {
 }
 
 func fatalf(format string, args ...interface{}) {
-	fmt.Fprintf(os.Stderr, "%s: %s", cmdname, fmt.Sprintf(format, args...))
+	fmt.Fprintf(os.Stderr, "%s: %s\n", cmdname, fmt.Sprintf(format, args...))
 	os.Exit(1)
 }
 
