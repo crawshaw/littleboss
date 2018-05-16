@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"crawshaw.io/littleboss/daemon"
+	"crawshaw.io/littleboss/boss"
 	"crawshaw.io/littleboss/lbclient"
 )
 
@@ -56,7 +56,7 @@ func start(args []string) {
 	if *flagDetach {
 		startDetached(name, binpath, args)
 	} else {
-		daemon.Main(name, binpath, args, false)
+		boss.Main(name, binpath, args, false)
 	}
 }
 

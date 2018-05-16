@@ -1,4 +1,4 @@
-package daemon // import "crawshaw.io/littleboss/daemon"
+package boss // import "crawshaw.io/littleboss/boss"
 
 import (
 	"context"

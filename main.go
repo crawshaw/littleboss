@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"crawshaw.io/littleboss/daemon"
+	"crawshaw.io/littleboss/boss"
 )
 
 var cmdname = "littleboss"
@@ -22,7 +22,7 @@ func main() {
 			fatalf("-daemon requires name and binary path arguments")
 		}
 		name, binary, args := os.Args[2], os.Args[3], os.Args[4:]
-		daemon.Main(name, binary, args, true)
+		boss.Main(name, binary, args, true)
 	}
 
 	var err error
