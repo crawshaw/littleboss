@@ -49,7 +49,7 @@ func FindDaemons() (clients []*Client, err error) {
 			continue
 		}
 		if fi.Mode().Perm() != 0700 {
-			log.Printf("%s has bad permissions: %s, want 0700", filepath.Join(os.TempDir(), fi.Name()), fi.Mode().Perm(), gid)
+			log.Printf("%s has bad permissions: %s, want 0700", filepath.Join(os.TempDir(), fi.Name()), fi.Mode().Perm())
 			continue
 		}
 		dir, err := os.Open(filepath.Join(os.TempDir(), fi.Name()))
