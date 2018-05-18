@@ -30,10 +30,6 @@ type InfoResponse struct {
 	BossStart time.Time `json:"boss_start"`
 }
 
-type StartResponse struct {
-	ServicePID int `json:"service_pid"`
-}
-
 type StopResponse struct {
 	Forced   bool `json:"forced,omitempty"` // timeout expired, process killed
 	ExitCode int  `json:"exit_code"`

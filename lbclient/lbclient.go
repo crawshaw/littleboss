@@ -47,23 +47,6 @@ func (c *Client) Info() (*lbrpc.InfoResponse, error) {
 	return res, nil
 }
 
-func (c *Client) Start(binpath string, args []string) (*lbrpc.StartResponse, error) {
-	c.conn.SetDeadline(time.Now().Add(1 * time.Second))
-	req := lbrpc.Request{
-		Type:   "start",
-		Binary: binpath,
-		Args:   args,
-	}
-	if err := c.w.Encode(req); err != nil {
-		return nil, fmt.Errorf("start: %v", err)
-	}
-	res := new(lbrpc.StartResponse)
-	if err := c.r.Decode(res); err != nil {
-		return nil, fmt.Errorf("start: %v", err)
-	}
-	return res, nil
-}
-
 func (c *Client) Stop(timeout time.Duration) (*lbrpc.StopResponse, error) {
 	c.conn.SetDeadline(time.Now().Add(1*time.Second + timeout))
 	req := lbrpc.Request{

@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -35,6 +36,7 @@ var state struct {
 	proc     *os.Process
 	binary   string
 	args     []string
+	lns      map[string]net.Listener
 	exitDone chan struct{} // closed when process closes, exitCode avail
 	exitCode int
 }
@@ -94,7 +96,7 @@ func Main(name, binary string, args []string, detached bool) {
 		Args:   args,
 	}
 	state.mu.Lock()
-	_, err = handleStartLocked(req)
+	err = handleStartLocked(req)
 	state.mu.Unlock()
 
 	if err != nil {
@@ -190,21 +192,77 @@ func handleInfo(req *lbrpc.Request) (interface{}, error) {
 	return res, nil
 }
 
-func handleStartLocked(req *lbrpc.Request) (interface{}, error) {
+func handleStartLocked(req *lbrpc.Request) (err error) {
+	defer func() {
+		if err != nil {
+			if len(state.lns) > 0 {
+				log.Printf("TODO: clean up sockets")
+			}
+		}
+	}()
+
+	if state.lns == nil {
+		state.lns = make(map[string]net.Listener)
+	}
+
+	origArgs := append([]string{}, req.Args...)
+
+	usedLns := make(map[string]bool)
+	lnList := []net.Listener{}
+	for i, arg := range req.Args {
+		var prefix, addr, suffix string
+		if i := strings.IndexByte(arg, '@'); i == -1 {
+			continue
+		} else {
+			prefix = arg[:i]
+			addr = arg[i+1:]
+			if i := strings.IndexByte(addr, '@'); i >= 0 {
+				suffix = addr[i+1:]
+				addr = addr[:i]
+			}
+		}
+		ln := state.lns[arg]
+		if ln == nil {
+			ln, err = net.Listen("tcp", addr)
+			if err != nil {
+				return err
+			}
+			log.Printf("opening socket %s", addr)
+		}
+		lnList = append(lnList, ln)
+		usedLns[arg] = true
+		state.lns[arg] = ln
+		req.Args[i] = fmt.Sprintf("%s/dev/fd/%d%s", prefix, 3+len(lnList)-1, suffix)
+	}
+	for arg, ln := range state.lns {
+		if !usedLns[arg] {
+			log.Printf("closing socket %s", arg)
+			ln.Close()
+			delete(state.lns, arg)
+		}
+	}
+
 	state.start = time.Now()
 	log.Printf("start %s %v", req.Binary, req.Args)
 	cmd := exec.Command(req.Binary, req.Args...)
+	for _, ln := range lnList {
+		f, err := ln.(*net.TCPListener).File()
+		if err != nil {
+			return err
+		}
+		cmd.ExtraFiles = append(cmd.ExtraFiles, f)
+	}
 	if !boss.detached {
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 	}
 	if err := cmd.Start(); err != nil {
-		return nil, err
+		return err
 	}
 	state.proc = cmd.Process
 	state.binary = req.Binary
-	state.args = req.Args
+	state.args = origArgs
 
 	go func() {
 		err := cmd.Wait()
@@ -246,7 +304,7 @@ func handleStartLocked(req *lbrpc.Request) (interface{}, error) {
 				return
 			}
 
-			_, err := handleStartLocked(req)
+			err := handleStartLocked(req)
 			if err != nil {
 				log.Printf("cannot restart service: %v", err)
 				exit(1)
@@ -254,9 +312,7 @@ func handleStartLocked(req *lbrpc.Request) (interface{}, error) {
 		}()
 	}()
 
-	return &lbrpc.StartResponse{
-		ServicePID: state.proc.Pid,
-	}, nil
+	return nil
 }
 
 func killService(timeout time.Duration) (forced bool, err error) {
@@ -341,7 +397,7 @@ func handleReload(req *lbrpc.Request) (interface{}, error) {
 		return nil, fmt.Errorf("reload interrupted")
 	}
 
-	if _, err := handleStartLocked(req); err != nil {
+	if err := handleStartLocked(req); err != nil {
 		return nil, err
 	}
 
