@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -98,8 +99,6 @@ func main() {
 
 func TestStartStopReload(t *testing.T) {
 	echoPath := goBuild(t, "echo_server", echoServer)
-	t.Logf("echoPath: %v", echoPath)
-	t.Log(os.Stat(echoPath))
 	buf := new(bytes.Buffer)
 	cmd := exec.Command(echoPath, "-littleboss=start")
 	cmd.Stdout = buf
@@ -159,6 +158,52 @@ func TestStartStopReload(t *testing.T) {
 	}
 	if count := strings.Count(buf.String(), "SupervisorInit called"); count != 1 {
 		t.Errorf("echo_server called SupervisorInit %d times, want 1", count)
+	}
+}
+
+const blockerServer = `package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"crawshaw.io/littleboss"
+)
+
+func main() {
+	lb := littleboss.New("blocker", nil)
+	lb.LameduckTimeout = 250*time.Millisecond
+	lb.Run(func(ctx context.Context) {
+		fmt.Println("started")
+		<-ctx.Done()
+		fmt.Println("got lameduck signal, blocking")
+		select {}
+	})
+}
+`
+
+func TestBlockingSIGINT(t *testing.T) {
+	path := goBuild(t, "blocker", blockerServer)
+	buf := new(bytes.Buffer)
+	cmd := exec.Command(path, "-littleboss=start")
+	cmd.Stdout = buf
+	cmd.Stderr = buf
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("-littleboss=start: %v: %s", err, buf.Bytes())
+	}
+	for {
+		if buf.Len() > 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	cmd.Process.Signal(syscall.SIGINT)
+	cmd.Wait()
+
+	out := buf.String()
+	if !strings.Contains(out, "got lameduck signal, blocking") {
+		t.Errorf("output does not mention lameduck mode:\n%s", out)
 	}
 }
 
