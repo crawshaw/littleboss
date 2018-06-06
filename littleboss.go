@@ -7,7 +7,7 @@
 // Convert a program to use littleboss my modifying the main function:
 //
 //	func main() {
-//		lb := littlebosssNew("service-name", nil)
+//		lb := littlebosss.New("service-name", nil)
 //		lb.Run(func(ctx context.Context) {
 //			// main goes here, exit when <-ctx.Done()
 //		})
@@ -52,9 +52,13 @@ import (
 )
 
 type Littleboss struct {
-	Logf              func(format string, args ...interface{})
-	FallbackOnFailure bool
-	ShutdownTimeout   time.Duration
+	Logf func(format string, args ...interface{}) // defaults to stderr
+
+	SupervisorInit func() // executed by supervisor on Run
+
+	Persist           bool          // if program exits, restart it
+	FallbackOnFailure bool          // if program exits badly, use previous version
+	LameduckTimeout   time.Duration // time to wait before forcing exit
 
 	// Fields set once in New.
 	name       string
@@ -81,7 +85,6 @@ type Littleboss struct {
 const usage = `instruct the littleboss:
 
 start:		start and manage this process using service name %q
-start-once:	start and manage this process, do not restart if exits
 stop:		signal the littleboss to shutdown the process
 status:		print statistics about the running littleboss
 reload:		restart the managed process using the executed binary
@@ -130,8 +133,8 @@ func New(serviceName string, flagSet *flag.FlagSet) *Littleboss {
 	cmd := flagSet.String("littleboss", "bypass", fmt.Sprintf(usage, serviceName))
 
 	lb := &Littleboss{
-		FallbackOnFailure: true,
-		ShutdownTimeout:   2 * time.Second,
+		FallbackOnFailure: false,
+		LameduckTimeout:   2 * time.Second,
 
 		name:       serviceName,
 		cmdname:    os.Args[0],
@@ -214,10 +217,8 @@ func (lb *Littleboss) Run(mainFn func(ctx context.Context)) {
 		// Littleboss is not in use, run the program as if we weren't here.
 		mainFn(context.Background())
 		os.Exit(0)
-	case "start-once":
-		lb.startBoss(false)
 	case "start":
-		lb.startBoss(true)
+		lb.startBoss()
 	default:
 		fmt.Fprintf(lb.stderr(), "%s: unknown littleboss command: %q\n\n", lb.cmdname, *lb.cmd)
 		lb.flagSet.Usage()
@@ -227,7 +228,7 @@ func (lb *Littleboss) Run(mainFn func(ctx context.Context)) {
 	panic("unexpected exit")
 }
 
-func (lb *Littleboss) startBoss(persist bool) {
+func (lb *Littleboss) startBoss() {
 	socketdir := lb.socketdir()
 	os.Mkdir(socketdir, 0700)
 	os.Chown(socketdir, os.Geteuid(), os.Getegid())
@@ -261,7 +262,11 @@ func (lb *Littleboss) startBoss(persist bool) {
 		lb.fatalf("cannot find oneself: %v", err)
 	}
 
-	go lb.runChild(persist, childPath)
+	if lb.SupervisorInit != nil {
+		lb.SupervisorInit()
+	}
+
+	go lb.runChild(childPath)
 
 	for {
 		conn, err := ln.AcceptUnix()
@@ -362,14 +367,14 @@ func (lb *Littleboss) handleStopBegin(stopSignal chan int) {
 		}()
 		select {
 		case <-done:
-		case <-time.After(2 * time.Second):
+		case <-time.After(lb.LameduckTimeout):
 			lb.Logf("timeout, forcing process exit")
 			process.Kill()
 		}
 	}
 }
 
-func (lb *Littleboss) runChild(persist bool, childPath string) {
+func (lb *Littleboss) runChild(childPath string) {
 	var prevChildPath string
 	var flags, prevFlags []string
 	var extraFiles, prevExtraFiles []*os.File
@@ -493,7 +498,7 @@ func (lb *Littleboss) runChild(persist bool, childPath string) {
 
 		if err == nil {
 			// Reload was not requested and child exited cleanly.
-			if persist {
+			if lb.Persist {
 				lb.Logf("%s exited, waiting one second and restarting", childPath)
 				time.Sleep(1 * time.Second)
 				continue
@@ -505,15 +510,15 @@ func (lb *Littleboss) runChild(persist bool, childPath string) {
 		// Reload was not requested and process exited badly.
 		oldChildPath := childPath
 		if loadPrev() {
-			lb.Logf("%s failed to start: %v, restarting previous binary", oldChildPath, err)
+			lb.Logf("%s failed: %v, restarting previous binary", oldChildPath, err)
 			continue
 		} else {
-			if persist {
+			if lb.Persist {
 				time.Sleep(1 * time.Second)
-				lb.Logf("%s failed to start, waiting one second and restarting", childPath)
+				lb.Logf("%s failed, waiting one second and restarting", childPath)
 				continue
 			}
-			// Failed to start child, no old binary, no persistence, so exit the boss.
+			// Child failed, no old binary, no persistence, so exit the boss.
 			lb.fatalf("%v", err)
 		}
 	}
@@ -526,18 +531,22 @@ func (lb *Littleboss) collectFlags() (flags []string, extraFDs []*os.File) {
 		extraFDs = append(extraFDs, lnf.f)
 	}
 
+	flags = []string{"-littleboss=child"}
+
 	visitedLns := make(map[string]bool)
 	lb.flagSet.Visit(func(f *flag.Flag) {
 		if lnf := lb.lnFlags[f.Name]; lnf != nil {
 			visitedLns[f.Name] = true
 			addLn(f, lnf)
 		} else if f.Name == "littleboss" {
-			flags = append(flags, "-littleboss", "child")
+			return // rewritten first
 		} else {
 			flags = append(flags, "-"+f.Name, f.Value.String())
 		}
 	})
 
+	// Any unset listener flag with a non-empty default value needs
+	// to be handled, even though it was not enumerated by Visit above.
 	var extraLnFlags []string
 	for name := range lb.lnFlags {
 		if !visitedLns[name] {
@@ -563,6 +572,7 @@ type ipcRes struct {
 	ExitCode int    `json:",omitempty"`
 }
 
+// issueStop sends a "stop" instruction to a running supervisor.
 func (lb *Littleboss) issueStop() {
 	socketpath := filepath.Join(lb.socketdir(), lb.name+".socket")
 	conn, err := net.Dial("unix", socketpath)
@@ -591,6 +601,7 @@ func (lb *Littleboss) issueStop() {
 	}
 }
 
+// issueReload sends a "reload" instruction to a running supervisor.
 func (lb *Littleboss) issueReload() {
 	socketpath := filepath.Join(lb.socketdir(), lb.name+".socket")
 	conn, err := net.Dial("unix", socketpath)
@@ -633,6 +644,9 @@ func (lb *Littleboss) issueReload() {
 	}
 }
 
+// child is executed in the child process.
+// It prepares the listener flags, connects the
+// root context to the supervisor and calls mainFn.
 func (lb *Littleboss) child(mainFn func(ctx context.Context)) {
 	// We are in the child process.
 	lb.running = true
@@ -690,8 +704,12 @@ func (lb *Littleboss) fatalf(format string, args ...interface{}) {
 	lb.exit(1)
 }
 
+func (lb *Littleboss) isSupervisor() bool {
+	return lb.cmd != nil && *lb.cmd == "start"
+}
+
 func (lb *Littleboss) exit(code int) {
-	if lb.cmd != nil && (*lb.cmd == "start" || *lb.cmd == "start-once") {
+	if lb.isSupervisor() {
 		os.RemoveAll(lb.socketdir())
 	}
 	os.Exit(code)

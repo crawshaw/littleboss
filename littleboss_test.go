@@ -28,6 +28,7 @@ import (
 
 func main() {
 	lb := littleboss.New("hello_program", nil)
+	lb.SupervisorInit = func() { panic("not called in bypass") }
 	lb.Run(func(context.Context) { println("hello, from littleboss.") })
 }
 `
@@ -75,11 +76,12 @@ import (
 
 func main() {
 	lb := littleboss.New("echo_server", nil)
+	lb.SupervisorInit = func() { fmt.Println("SupervisorInit called") }
 	flagAddr := lb.Listener("addr", "tcp", ":0", "addr to dial to hear lines echoed")
 	lb.Run(func(ctx context.Context) {
 		ln := flagAddr.Listener()
-		fmt.Println(ln.Addr())
-		defer func() {
+		fmt.Printf("addr=%s\n", ln.Addr())
+		go func() {
 			<-ctx.Done()
 			fmt.Println("entering lameduck mode")
 			ln.Close()
@@ -134,12 +136,17 @@ func TestStartStopReload(t *testing.T) {
 	}
 	defer cmd.Process.Kill()
 	time.Sleep(50 * time.Millisecond)
-	addr, err := buf.ReadString('\n')
-	if err != nil {
-		t.Fatal(err)
+	var addr string
+	if str, i := buf.String(), strings.Index(buf.String(), "addr="); i >= 0 {
+		addr = str[i:]
+		if i := strings.Index(addr, "\n"); i > 0 {
+			addr = addr[:i]
+		}
+	} else {
+		t.Fatalf("no addr in output:\n%s", str)
 	}
 	t.Logf("echo_server address: %q", addr)
-	port := addr[strings.LastIndex(addr, ":")+1 : len(addr)-1]
+	port := addr[strings.LastIndex(addr, ":")+1:]
 
 	const want = "hello\n"
 	conn, err := net.Dial("tcp", net.JoinHostPort("localhost", port))
@@ -167,16 +174,20 @@ func TestStartStopReload(t *testing.T) {
 		}
 	}
 
-	/*buf.Truncate(0)
-
 	output, err := exec.Command(echoPath, "-littleboss=stop").CombinedOutput()
 	if err != nil {
 		t.Fatalf("stop failed: %v: %s\necho_server output:\n%s", err, output, buf.Bytes())
 	}
 	cmd.Wait()
-	if s := buf.String(); !strings.Contains(s, "lameduck mode") {
+
+	if s := buf.String(); strings.Count(s, "lameduck mode") != 2 {
+		// once for reload, and once for stop
 		t.Errorf("echo_server does not mention lameduck mode:\n%s", s)
-	}*/
+	}
+	if count := strings.Count(buf.String(), "SupervisorInit called"); count != 1 {
+		t.Errorf("echo_server called SupervisorInit %d times, want 1", count)
+	}
+
 }
 
 func findGoTool(t *testing.T) string {
