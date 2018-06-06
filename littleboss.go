@@ -388,12 +388,14 @@ func (lb *Littleboss) handleStopBegin(stopSignal chan int) {
 			process.Wait()
 			done <- struct{}{}
 		}()
-		select {
-		case <-done:
-		case <-time.After(lb.LameduckTimeout):
-			lb.Logf("timeout, forcing process exit")
-			process.Kill()
-		}
+		go func() {
+			select {
+			case <-done:
+			case <-time.After(lb.LameduckTimeout):
+				lb.Logf("timeout, forcing process exit")
+				process.Kill()
+			}
+		}()
 	}
 }
 
@@ -435,6 +437,9 @@ func (lb *Littleboss) runChild(childPath string) {
 		cmd.Stdin = os.Stdin // TODO: Stdio fields in *Littleboss
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Setpgid: true, // we propagate SIGINT ourselves
+		}
 
 		err = cmd.Start()
 		if err != nil {
@@ -497,6 +502,7 @@ func (lb *Littleboss) runChild(childPath string) {
 		lb.childEnd = time.Now()
 		lb.childPiper = nil
 		stopSignal := lb.stopSignal
+		lb.stopSignal = nil
 		lb.mu.Unlock()
 
 		if stopSignal != nil {

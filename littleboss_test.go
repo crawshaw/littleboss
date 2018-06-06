@@ -3,6 +3,7 @@ package littleboss_test
 import (
 	"bufio"
 	"bytes"
+	"fmt"
 	"go/build"
 	"io"
 	"io/ioutil"
@@ -34,32 +35,21 @@ func main() {
 `
 
 func TestBypass(t *testing.T) {
-	goTool := findGoTool(t)
-
-	dir, err := ioutil.TempDir("", "littleboss_test_")
+	helloPath := goBuild(t, "hello", helloProgram)
+	output, err := exec.Command(helloPath).CombinedOutput()
 	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
-	helloPath := filepath.Join(dir, "hello.go")
-	if err := ioutil.WriteFile(helloPath, []byte(helloProgram), 0666); err != nil {
-		t.Fatal(err)
-	}
-
-	output, err := exec.Command(goTool, "run", helloPath).CombinedOutput()
-	if err != nil {
-		t.Fatalf("go run hello.go: %v: %s", err, output)
+		t.Fatalf("%v: %s", err, output)
 	}
 	if got, want := string(output), "hello, from littleboss.\n"; got != want {
-		t.Errorf("go run hello.go = %q, want %q", got, want)
+		t.Errorf("output = %q, want %q", got, want)
 	}
 
-	output, err = exec.Command(goTool, "run", helloPath, "-littleboss=bypass").CombinedOutput()
+	output, err = exec.Command(helloPath, "-littleboss=bypass").CombinedOutput()
 	if err != nil {
-		t.Fatalf("go run hello.go -littleboss=bypass: %v: %s", err, output)
+		t.Fatalf("hello -littleboss=bypass: %v: %s", err, output)
 	}
 	if got, want := string(output), "hello, from littleboss.\n"; got != want {
-		t.Errorf("go run hello.go -littleboss=bypass = %q, want %q", got, want)
+		t.Errorf("hello -littleboss=bypass = %q, want %q", got, want)
 	}
 }
 
@@ -107,28 +97,11 @@ func main() {
 `
 
 func TestStartStopReload(t *testing.T) {
-	goTool := findGoTool(t)
-
-	dir, err := ioutil.TempDir("", "littleboss_test_")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
-	os.MkdirAll(filepath.Join(dir, "src", "echo_server"), 0777)
-	srcPath := filepath.Join(dir, "src", "echo_server", "echo_server.go")
-	if err := ioutil.WriteFile(srcPath, []byte(echoServer), 0666); err != nil {
-		t.Fatal(err)
-	}
-
-	cmd := exec.Command(goTool, "install", "echo_server")
-	cmd.Env = append(os.Environ(), "GOPATH="+dir+":"+build.Default.GOPATH)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("go install echo_server: %v: %s", err, output)
-	}
-
-	echoPath := filepath.Join(dir, "bin", "echo_server")
+	echoPath := goBuild(t, "echo_server", echoServer)
+	t.Logf("echoPath: %v", echoPath)
+	t.Log(os.Stat(echoPath))
 	buf := new(bytes.Buffer)
-	cmd = exec.Command(echoPath, "-littleboss=start")
+	cmd := exec.Command(echoPath, "-littleboss=start")
 	cmd.Stdout = buf
 	cmd.Stderr = buf
 	if err := cmd.Start(); err != nil {
@@ -187,7 +160,20 @@ func TestStartStopReload(t *testing.T) {
 	if count := strings.Count(buf.String(), "SupervisorInit called"); count != 1 {
 		t.Errorf("echo_server called SupervisorInit %d times, want 1", count)
 	}
+}
 
+var tempdir string
+
+func TestMain(m *testing.M) {
+	var err error
+	tempdir, err = ioutil.TempDir("", "littleboss_test_")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "TestMain: %v\n", err)
+		os.Exit(1)
+	}
+	exitCode := m.Run()
+	os.RemoveAll(tempdir)
+	os.Exit(exitCode)
 }
 
 func findGoTool(t *testing.T) string {
@@ -203,4 +189,24 @@ func findGoTool(t *testing.T) string {
 		t.Fatalf("go tool is not available: %v", err2)
 	}
 	return path
+}
+
+func goBuild(t *testing.T, name, src string) (path string) {
+	goTool := findGoTool(t)
+
+	os.MkdirAll(filepath.Join(tempdir, "bin"), 0777)
+	os.MkdirAll(filepath.Join(tempdir, "src", name), 0777)
+	srcPath := filepath.Join(tempdir, "src", name, name+".go")
+	if err := ioutil.WriteFile(srcPath, []byte(src), 0666); err != nil {
+		t.Fatalf("writing %s: %v", name, err)
+	}
+
+	cmd := exec.Command(goTool, "install", name)
+	cmd.Env = os.Environ()
+	cmd.Env = append(cmd.Env, "GOPATH="+tempdir+":"+build.Default.GOPATH)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go install %s: %v: %s", name, err, output)
+	}
+
+	return filepath.Join(tempdir, "bin", name)
 }
