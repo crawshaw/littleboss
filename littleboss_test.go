@@ -20,11 +20,15 @@ import (
 
 const helloProgram = `package main
 
-import "crawshaw.io/littleboss"
+import (
+	"context"
+
+	"crawshaw.io/littleboss"
+)
 
 func main() {
 	lb := littleboss.New("hello_program", nil)
-	lb.Run(func() { println("hello, from littleboss.") })
+	lb.Run(func(context.Context) { println("hello, from littleboss.") })
 }
 `
 
@@ -62,6 +66,7 @@ const echoServer = `package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 
@@ -71,22 +76,26 @@ import (
 func main() {
 	lb := littleboss.New("echo_server", nil)
 	flagAddr := lb.Listener("addr", "tcp", ":0", "addr to dial to hear lines echoed")
-	lb.Run(func() {
+	lb.Run(func(ctx context.Context) {
 		ln := flagAddr.Listener()
 		fmt.Println(ln.Addr())
+		defer func() {
+			<-ctx.Done()
+			fmt.Println("entering lameduck mode")
+			ln.Close()
+		}()
 		for {
 			conn, err := ln.Accept()
 			if err != nil {
 				ln.Close()
-				fmt.Printf("accept failed: %v\n", err)
-				os.Exit(1)
+				os.Exit(0)
 			}
 			br := bufio.NewReader(conn)
 			str, err := br.ReadBytes('\n')
 			if err != nil {
-				ln.Close()
+				conn.Close()
 				fmt.Printf("conn read bytes failed: %v\n", err)
-				os.Exit(1)
+				continue
 			}
 			conn.Write(str)
 			conn.Close()
@@ -115,8 +124,9 @@ func TestStartStopReload(t *testing.T) {
 		t.Fatalf("go install echo_server: %v: %s", err, output)
 	}
 
+	echoPath := filepath.Join(dir, "bin", "echo_server")
 	buf := new(bytes.Buffer)
-	cmd = exec.Command(filepath.Join(dir, "bin", "echo_server"), "-littleboss=start")
+	cmd = exec.Command(echoPath, "-littleboss=start")
 	cmd.Stdout = buf
 	cmd.Stderr = buf
 	if err := cmd.Start(); err != nil {
@@ -132,7 +142,6 @@ func TestStartStopReload(t *testing.T) {
 	port := addr[strings.LastIndex(addr, ":")+1 : len(addr)-1]
 
 	const want = "hello\n"
-
 	conn, err := net.Dial("tcp", net.JoinHostPort("localhost", port))
 	if err != nil {
 		t.Fatalf("could not dial echo server: %v", err)
@@ -146,10 +155,28 @@ func TestStartStopReload(t *testing.T) {
 		t.Fatalf("could not read from echo server: %v", err)
 	}
 	conn.Close()
-
 	if got != want {
 		t.Errorf("echo server replied with %q, want %q", got, want)
 	}
+
+	if output, err := exec.Command(echoPath, "-littleboss=reload").CombinedOutput(); err != nil {
+		t.Fatalf("reload failed: %v: %s\necho_server output:\n%s", err, output, buf.Bytes())
+	} else {
+		if s := buf.String(); !strings.Contains(s, "reload requested") {
+			t.Errorf("echo_server does not mention reload in stdout:\n%s", s)
+		}
+	}
+
+	/*buf.Truncate(0)
+
+	output, err := exec.Command(echoPath, "-littleboss=stop").CombinedOutput()
+	if err != nil {
+		t.Fatalf("stop failed: %v: %s\necho_server output:\n%s", err, output, buf.Bytes())
+	}
+	cmd.Wait()
+	if s := buf.String(); !strings.Contains(s, "lameduck mode") {
+		t.Errorf("echo_server does not mention lameduck mode:\n%s", s)
+	}*/
 }
 
 func findGoTool(t *testing.T) string {

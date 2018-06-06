@@ -28,6 +28,7 @@
 package littleboss
 
 // TODO status
+// TODO reload changing flags
 // TODO bring child up before shutting down old binary
 
 import (
@@ -56,12 +57,13 @@ type Littleboss struct {
 	ShutdownTimeout   time.Duration
 
 	// Fields set once in New.
-	name     string
-	cmdname  string
-	cmd      *string // pointed-to val fixed by flag.Parse in Run.
-	username string
-	flagSet  *flag.FlagSet
-	reload   chan string
+	name       string
+	cmdname    string
+	cmd        *string // pointed-to val fixed by flag.Parse in Run.
+	username   string
+	flagSet    *flag.FlagSet
+	reload     chan string
+	reloadDone chan error
 
 	// Fields fixed by Run.
 	running bool
@@ -131,13 +133,14 @@ func New(serviceName string, flagSet *flag.FlagSet) *Littleboss {
 		FallbackOnFailure: true,
 		ShutdownTimeout:   2 * time.Second,
 
-		name:     serviceName,
-		cmdname:  os.Args[0],
-		username: u.Username,
-		cmd:      cmd,
-		flagSet:  flagSet,
-		reload:   make(chan string, 1),
-		lnFlags:  make(map[string]*ListenerFlag),
+		name:       serviceName,
+		cmdname:    os.Args[0],
+		username:   u.Username,
+		cmd:        cmd,
+		flagSet:    flagSet,
+		reload:     make(chan string, 1),
+		reloadDone: make(chan error),
+		lnFlags:    make(map[string]*ListenerFlag),
 	}
 	lb.Logf = func(format string, args ...interface{}) {
 		fmt.Fprintf(lb.stderr(), "littleboss: %s\n", fmt.Sprintf(format, args...))
@@ -176,9 +179,9 @@ func (lb *Littleboss) Run(mainFn func(ctx context.Context)) {
 
 	switch *lb.cmd {
 	case "stop":
-		lb.stop()
+		lb.issueStop()
 	case "reload":
-		panic("TODO littleboss reload")
+		lb.issueReload()
 	case "status":
 		panic("TODO littleboss status")
 	case "child":
@@ -285,57 +288,83 @@ func (lb *Littleboss) handler(conn *net.UnixConn) {
 		}
 		switch req.Cmd {
 		case "stop":
-			lb.Logf("stop requested")
-			stopSignal := make(chan int)
-
-			lb.mu.Lock()
-			lb.stopSignal = stopSignal
-			process := lb.childProcess
-			childPiper := lb.childPiper
-			lb.mu.Unlock()
-
-			if process != nil {
-				childPiper.Write("lameduck")
-				done := make(chan struct{}, 2)
-				go func() {
-					if childPiper.Read() == "finished" {
-						done <- struct{}{}
-					}
-				}()
-				go func() {
-					process.Wait()
-					done <- struct{}{}
-				}()
-				select {
-				case <-done:
-				case <-time.After(2 * time.Second):
-					lb.Logf("timeout, forcing process exit")
-					process.Kill()
-				}
-			}
-
-			var exitCode int
-			stopped := false
-			select {
-			case exitCode = <-stopSignal:
-				stopped = true
-			case <-time.After(100 * time.Millisecond):
-			}
-
-			if !stopped {
-				w.Encode(ipcRes{Type: "stopping"})
-				exitCode = <-stopSignal
-			}
-
-			res := ipcRes{
-				Type:     "stopped",
-				ExitCode: exitCode,
-			}
-			w.Encode(res)
-			lb.exit(exitCode)
+			lb.handleStop(w)
+		case "reload":
+			lb.handleReload(w, req)
 		default:
 			lb.Logf("unknown ipc command: %q", req.Cmd)
 			return
+		}
+	}
+}
+
+func (lb *Littleboss) handleReload(w *json.Encoder, req ipcReq) {
+	lb.Logf("reload requested")
+	lb.reload <- req.ChildPath
+	go lb.handleStopBegin(nil)
+	err := <-lb.reloadDone
+	errStr := ""
+	if err != nil {
+		errStr = err.Error()
+	}
+
+	res := ipcRes{
+		Type:  "reloaded",
+		Error: errStr,
+	}
+	w.Encode(res)
+}
+
+func (lb *Littleboss) handleStop(w *json.Encoder) {
+	lb.Logf("stop requested")
+	stopSignal := make(chan int)
+	lb.handleStopBegin(stopSignal)
+
+	var exitCode int
+	stopped := false
+	select {
+	case exitCode = <-stopSignal:
+		stopped = true
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	if !stopped {
+		w.Encode(ipcRes{Type: "stopping"})
+		exitCode = <-stopSignal
+	}
+
+	res := ipcRes{
+		Type:     "stopped",
+		ExitCode: exitCode,
+	}
+	w.Encode(res)
+	lb.exit(exitCode)
+}
+
+func (lb *Littleboss) handleStopBegin(stopSignal chan int) {
+	lb.mu.Lock()
+	lb.stopSignal = stopSignal
+	process := lb.childProcess
+	childPiper := lb.childPiper
+	lb.mu.Unlock()
+
+	if process != nil {
+		childPiper.Write("lameduck")
+		done := make(chan struct{}, 2)
+		go func() {
+			if childPiper.Read() == "finished" {
+				done <- struct{}{}
+			}
+		}()
+		go func() {
+			process.Wait()
+			done <- struct{}{}
+		}()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			lb.Logf("timeout, forcing process exit")
+			process.Kill()
 		}
 	}
 }
@@ -411,6 +440,11 @@ func (lb *Littleboss) runChild(persist bool, childPath string) {
 				childPiper.Write("go")
 				err = childPiper.Error()
 			}
+		}
+
+		select {
+		case lb.reloadDone <- err:
+		default:
 		}
 
 		if err == nil {
@@ -525,10 +559,11 @@ type ipcReq struct {
 
 type ipcRes struct {
 	Type     string // "stopping", "stopped", "status", "reloading", "reloaded"
+	Error    string `json:",omitempty"`
 	ExitCode int    `json:",omitempty"`
 }
 
-func (lb *Littleboss) stop() {
+func (lb *Littleboss) issueStop() {
 	socketpath := filepath.Join(lb.socketdir(), lb.name+".socket")
 	conn, err := net.Dial("unix", socketpath)
 	if err != nil {
@@ -552,6 +587,48 @@ func (lb *Littleboss) stop() {
 		case "stopped":
 			fmt.Fprintf(lb.stderr(), "stopped %s exit code %d\n", lb.name, res.ExitCode)
 			os.Exit(res.ExitCode)
+		}
+	}
+}
+
+func (lb *Littleboss) issueReload() {
+	socketpath := filepath.Join(lb.socketdir(), lb.name+".socket")
+	conn, err := net.Dial("unix", socketpath)
+	if err != nil {
+		lb.fatalf("cannot connect to %s: %v", lb.name, err)
+	}
+	r := json.NewDecoder(conn)
+	w := json.NewEncoder(conn)
+
+	childPath, err := os.Executable()
+	if err != nil {
+		lb.fatalf("cannot find oneself: %v", err)
+	}
+
+	req := ipcReq{
+		Cmd:       "reload",
+		ChildPath: childPath,
+	}
+	if err := w.Encode(req); err != nil {
+		lb.fatalf("ipc write error: %v", err)
+	}
+
+	for {
+		var res ipcRes
+		if err := r.Decode(&res); err != nil {
+			lb.fatalf("ipc read error: %v", err)
+		}
+		switch res.Type {
+		case "reloading":
+			fmt.Fprintf(lb.stderr(), "reloading %s\n", lb.name)
+		case "reloaded":
+			if res.Error == "" {
+				fmt.Fprintf(lb.stderr(), "reloaded %s\n", lb.name)
+				os.Exit(0)
+			} else {
+				fmt.Fprintf(lb.stderr(), "reload of %s failed: %s\n", lb.name, res.Error)
+				os.Exit(1)
+			}
 		}
 	}
 }
