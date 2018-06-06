@@ -41,6 +41,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"os/user"
 	"path/filepath"
 	"sort"
@@ -265,6 +266,28 @@ func (lb *Littleboss) startBoss() {
 	if lb.SupervisorInit != nil {
 		lb.SupervisorInit()
 	}
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		sig := <-sigCh
+		fmt.Fprintf(lb.stderr(), "littleboss: signal received: %s\n", sig)
+		stopSignal := make(chan int)
+		lb.handleStopBegin(stopSignal)
+
+		var exitCode int
+		stopped := false
+		select {
+		case exitCode = <-stopSignal:
+			stopped = true
+		case <-time.After(100 * time.Millisecond):
+			fmt.Fprintf(lb.stderr(), "littleboss: lameduck mode, exiting in %v\n", lb.LameduckTimeout)
+		}
+		if !stopped {
+			exitCode = <-stopSignal
+		}
+		lb.exit(exitCode)
+	}()
 
 	go lb.runChild(childPath)
 
