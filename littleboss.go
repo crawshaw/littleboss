@@ -205,7 +205,7 @@ func (lb *Littleboss) Run(mainFn func(ctx context.Context)) {
 	for name, lnf := range lb.lnFlags {
 		ln, err := net.Listen(lnf.net, lnf.val)
 		if err != nil {
-			fmt.Fprintf(lb.stderr(), "%s: -%s: %v", lb.cmdname, name, err)
+			fmt.Fprintf(lb.stderr(), "%s: -%s: %v\n", lb.cmdname, name, err)
 			os.Exit(1)
 		}
 		switch ln := ln.(type) {
