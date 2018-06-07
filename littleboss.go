@@ -25,10 +25,17 @@
 //	$ mybin2 -littleboss=reload   # child is replaced by new mybin2 process
 //	$ mybin -littleboss=stop      # supervisor and child are shut down
 //
+//
+// Configuration
+//
+// Supervisor options are baked into the binary.
+// The Littleboss struct contains fields that can be set before calling
+// the Run method to configure the supervisor.
 package littleboss
 
 // TODO status
 // TODO reload changing flags
+// TODO instrument supervisor
 // TODO bring child up before shutting down old binary
 
 import (
@@ -53,6 +60,10 @@ import (
 )
 
 type Littleboss struct {
+	FlagSet   *flag.FlagSet // used for creating flags, default flag.CommandLine
+	FlagName  string        // control flag name, default "littleboss"
+	FlagValue string        // initial value for control flag, default "bypass"
+
 	Logf func(format string, args ...interface{}) // defaults to stderr
 
 	SupervisorInit func() // executed by supervisor on Run
@@ -64,13 +75,12 @@ type Littleboss struct {
 	// Fields set once in New.
 	name       string
 	cmdname    string
-	cmd        *string // pointed-to val fixed by flag.Parse in Run.
 	username   string
-	flagSet    *flag.FlagSet
 	reload     chan string
 	reloadDone chan error
 
 	// Fields fixed by Run.
+	cmd     *string
 	running bool
 	lnFlags map[string]*ListenerFlag
 
@@ -92,11 +102,12 @@ reload:		restart the managed process using the executed binary
 bypass:		disable littleboss, run the program directly`
 
 type ListenerFlag struct {
-	lb  *Littleboss
-	net string
-	val string
-	ln  net.Listener
-	f   *os.File // listener fd in children
+	lb    *Littleboss
+	net   string
+	val   string
+	ln    net.Listener
+	f     *os.File // listener fd in children
+	usage string
 }
 
 func (lnf *ListenerFlag) String() string {
@@ -115,15 +126,9 @@ func (lnf *ListenerFlag) Set(value string) error {
 	return nil
 }
 
-func New(serviceName string, flagSet *flag.FlagSet) *Littleboss {
-	if flagSet == nil {
-		flagSet = flag.CommandLine
-	}
+func New(serviceName string) *Littleboss {
 	if !isValidServiceName(serviceName) {
 		panic(fmt.Sprintf("littleboss: invalid service name %q, must be [a-zA-Z0-9_-]", serviceName))
-	}
-	if flagSet.Parsed() {
-		panic(fmt.Sprintf("littleboss: flags parsed before New called"))
 	}
 	uid := os.Geteuid()
 	u, err := user.LookupId(strconv.Itoa(uid))
@@ -131,17 +136,17 @@ func New(serviceName string, flagSet *flag.FlagSet) *Littleboss {
 		panic(fmt.Sprintf("littleboss: cannot determine user name: %v", err))
 	}
 
-	cmd := flagSet.String("littleboss", "bypass", fmt.Sprintf(usage, serviceName))
-
 	lb := &Littleboss{
+		FlagSet:   flag.CommandLine,
+		FlagName:  "littleboss",
+		FlagValue: "bypass",
+
 		FallbackOnFailure: false,
 		LameduckTimeout:   2 * time.Second,
 
 		name:       serviceName,
 		cmdname:    os.Args[0],
 		username:   u.Username,
-		cmd:        cmd,
-		flagSet:    flagSet,
 		reload:     make(chan string, 1),
 		reloadDone: make(chan error),
 		lnFlags:    make(map[string]*ListenerFlag),
@@ -157,12 +162,12 @@ func (lb *Littleboss) Listener(flagName, network, value, usage string) *Listener
 		panic("littleboss: cannot create Listener flag after calling Run")
 	}
 	lnf := &ListenerFlag{
-		lb:  lb,
-		val: value,
-		net: network,
+		lb:    lb,
+		val:   value,
+		net:   network,
+		usage: usage,
 	}
 	lb.lnFlags[flagName] = lnf
-	lb.flagSet.Var(lnf, flagName, usage)
 	return lnf
 }
 
@@ -173,12 +178,17 @@ func (lb *Littleboss) Run(mainFn func(ctx context.Context)) {
 		panic("littleboss: Run called multiple times")
 	}
 
+	if lb.FlagSet.Parsed() {
+		panic(fmt.Sprintf("littleboss: flags parsed before Run called"))
+	}
+	lb.cmd = lb.FlagSet.String(lb.FlagName, lb.FlagValue, fmt.Sprintf(usage, lb.name))
+	for flagName, lnf := range lb.lnFlags {
+		lb.FlagSet.Var(lnf, flagName, lnf.usage)
+	}
+	lb.FlagSet.Parse(os.Args[1:])
+
 	if lb.Logf == nil {
 		lb.Logf = func(format string, args ...interface{}) {} // do nothing
-	}
-
-	if !lb.flagSet.Parsed() {
-		lb.flagSet.Parse(os.Args[1:])
 	}
 
 	switch *lb.cmd {
@@ -222,7 +232,7 @@ func (lb *Littleboss) Run(mainFn func(ctx context.Context)) {
 		lb.startBoss()
 	default:
 		fmt.Fprintf(lb.stderr(), "%s: unknown littleboss command: %q\n\n", lb.cmdname, *lb.cmd)
-		lb.flagSet.Usage()
+		lb.FlagSet.Usage()
 		os.Exit(2)
 	}
 
@@ -563,7 +573,7 @@ func (lb *Littleboss) collectFlags() (flags []string, extraFDs []*os.File) {
 	flags = []string{"-littleboss=child"}
 
 	visitedLns := make(map[string]bool)
-	lb.flagSet.Visit(func(f *flag.Flag) {
+	lb.FlagSet.Visit(func(f *flag.Flag) {
 		if lnf := lb.lnFlags[f.Name]; lnf != nil {
 			visitedLns[f.Name] = true
 			addLn(f, lnf)
@@ -584,7 +594,7 @@ func (lb *Littleboss) collectFlags() (flags []string, extraFDs []*os.File) {
 	}
 	sort.Strings(extraLnFlags)
 	for _, name := range extraLnFlags {
-		addLn(lb.flagSet.Lookup(name), lb.lnFlags[name])
+		addLn(lb.FlagSet.Lookup(name), lb.lnFlags[name])
 	}
 
 	return flags, extraFDs
@@ -721,7 +731,7 @@ func (lb *Littleboss) child(mainFn func(ctx context.Context)) {
 }
 
 func (lb *Littleboss) stderr() io.Writer {
-	return lb.flagSet.Output()
+	return lb.FlagSet.Output()
 }
 
 func (lb *Littleboss) socketdir() string {

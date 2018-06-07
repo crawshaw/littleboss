@@ -29,7 +29,7 @@ import (
 )
 
 func main() {
-	lb := littleboss.New("hello_program", nil)
+	lb := littleboss.New("hello_program")
 	lb.SupervisorInit = func() { panic("not called in bypass") }
 	lb.Run(func(context.Context) { println("hello, from littleboss.") })
 }
@@ -66,7 +66,7 @@ import (
 )
 
 func main() {
-	lb := littleboss.New("echo_server", nil)
+	lb := littleboss.New("echo_server")
 	lb.SupervisorInit = func() { fmt.Println("SupervisorInit called") }
 	flagAddr := lb.Listener("addr", "tcp", ":0", "addr to dial to hear lines echoed")
 	lb.Run(func(ctx context.Context) {
@@ -172,7 +172,7 @@ import (
 )
 
 func main() {
-	lb := littleboss.New("blocker", nil)
+	lb := littleboss.New("blocker")
 	lb.LameduckTimeout = 250*time.Millisecond
 	lb.Run(func(ctx context.Context) {
 		fmt.Println("started")
