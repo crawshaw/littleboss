@@ -520,9 +520,10 @@ func (lb *Littleboss) runChild(childPath string) {
 			} else {
 				if res := childPiper.Read(); res != "ready" {
 					err = fmt.Errorf("child not ready: %q (%v)", res, childPiper.Error())
+				} else {
+					childPiper.Write("go")
+					err = childPiper.Error()
 				}
-				childPiper.Write("go")
-				err = childPiper.Error()
 			}
 		}
 
