@@ -1,13 +1,13 @@
 // Package littleboss creates self-supervising Go binaries.
 //
 // A self-supervising binary starts itself as a child process.
-// The parent process becomes a little boss that is responsible for
-// mointoring, managing I/O, restarting, and reloading the child.
+// The parent process becomes a supervisor that is responsible for
+// monitoring, managing I/O, restarting, and reloading the child.
 //
-// Convert a program to use littleboss my modifying the main function:
+// Make a program use littleboss by modifying the main function:
 //
 //	func main() {
-//		lb := littlebosss.New("service-name", nil)
+//		lb := littlebosss.New("service-name")
 //		lb.Run(func(ctx context.Context) {
 //			// main goes here, exit when <-ctx.Done()
 //		})
@@ -29,7 +29,7 @@
 // Configuration
 //
 // Supervisor options are baked into the binary.
-// The Littleboss struct contains fields that can be set before calling
+// The Littleboss struct type contains fields that can be set before calling
 // the Run method to configure the supervisor.
 package littleboss
 
