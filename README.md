@@ -19,7 +19,7 @@ Make a program use littleboss by modifying the main function:
 
 ```
 func main() {
-	lb := littlebosss.New("service-name", nil)
+	lb := littleboss.New("service-name", nil)
 	lb.Run(func(ctx context.Context) {
 		// main goes here, exit when <-ctx.Done()
 	})
