@@ -137,7 +137,7 @@ func New(serviceName string) *Littleboss {
 	lb := &Littleboss{
 		FlagSet: flag.CommandLine,
 
-		FallbackOnFailure: false,
+		FallbackOnFailure: true,
 		LameduckTimeout:   2 * time.Second,
 
 		name:       serviceName,
@@ -512,16 +512,30 @@ func (lb *Littleboss) runChild(childPath string) {
 			}
 		}
 
-		select {
-		case lb.reloadDone <- err:
-		default:
-		}
+		failure := make(chan error, 1)
+		go func(err error) {
+			if err == nil {
+				// We pause for a moment before reporting successful
+				// reloads in case the client fails early into its
+				// main function (which is common).
+				select {
+				case err = <-failure:
+				case <-time.After(250 * time.Millisecond):
+				}
+			}
+
+			select {
+			case lb.reloadDone <- err:
+			default:
+			}
+		}(err)
 
 		if err == nil {
 			err = cmd.Wait()
 		}
 
 		if err != nil {
+			failure <- err
 			if exErr, _ := err.(*exec.ExitError); exErr != nil {
 				exitCode = exErr.Sys().(syscall.WaitStatus).ExitStatus()
 				lb.Logf("exit code %d", exitCode)

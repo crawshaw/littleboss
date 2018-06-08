@@ -249,6 +249,76 @@ func TestPFlag(t *testing.T) {
 	}
 }
 
+const failureServer = `package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+
+	"crawshaw.io/littleboss"
+)
+
+func main() {
+	const version = %d
+	lb := littleboss.New("blocker")
+	lb.Run(func(ctx context.Context) {
+		if version > 1 {
+			fmt.Println("failed to start version", version)
+			os.Exit(1)
+		}
+		fmt.Println("running version", version)
+		<-ctx.Done()
+	})
+}
+`
+
+func TestReloadFailure(t *testing.T) {
+	failure1 := goBuild(t, "failure1", fmt.Sprintf(failureServer, 1))
+	buf := new(bytes.Buffer)
+	cmd := exec.Command(failure1, "-littleboss=start")
+	cmd.Stdout = buf
+	cmd.Stderr = buf
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("-littleboss=start: %v: %s", err, buf.Bytes())
+	}
+	for {
+		if buf.Len() > 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "running version 1") {
+		t.Errorf("output does not mention version 1:\n%s", out)
+	}
+
+	failure2 := goBuild(t, "failure2", fmt.Sprintf(failureServer, 2))
+	buf2 := new(bytes.Buffer)
+	cmd2 := exec.Command(failure2, "-littleboss=reload")
+	cmd2.Stdout = buf2
+	cmd2.Stderr = buf2
+	if err := cmd2.Run(); err == nil {
+		t.Fatalf("expected failure2 to fail, but it didn't:\n%s\n\nboss output:\n%s", buf2.String(), buf.String())
+	}
+
+	for i := 0; i < 10; i++ {
+		if count := strings.Count(buf.String(), "running version 1"); count > 1 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if output, err := exec.Command(failure1, "-littleboss=stop").CombinedOutput(); err != nil {
+		t.Fatalf("stop failed:\n%s", output)
+	}
+
+	out = buf.String()
+	if got := strings.Count(out, "running version 1"); got != 2 {
+		t.Fatalf("expected two v1 starts, got %d. output:\n%s", got, out)
+	}
+}
+
 var tempdir string
 
 func TestMain(m *testing.M) {
