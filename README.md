@@ -26,6 +26,8 @@ func main() {
 }
 ```
 
+The service name is used to identify which program the supervisor will control.
+
 ## Usage
 
 By default the supervisor is bypassed and the program executes directly.
