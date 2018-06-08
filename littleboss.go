@@ -60,9 +60,7 @@ import (
 )
 
 type Littleboss struct {
-	FlagSet   *flag.FlagSet // used for creating flags, default flag.CommandLine
-	FlagName  string        // control flag name, default "littleboss"
-	FlagValue string        // initial value for control flag, default "bypass"
+	FlagSet *flag.FlagSet // used for passing flags to child, default flag.CommandLine
 
 	Logf func(format string, args ...interface{}) // defaults to stderr
 
@@ -80,9 +78,10 @@ type Littleboss struct {
 	reloadDone chan error
 
 	// Fields fixed by Run.
-	cmd     *string
-	running bool
-	lnFlags map[string]*ListenerFlag
+	modeFlagName string
+	mode         *string
+	running      bool
+	lnFlags      map[string]*ListenerFlag
 
 	// Fields used by runChild and "status"/"stop"/"reload" handlers.
 	mu           sync.Mutex
@@ -102,16 +101,15 @@ reload:		restart the managed process using the executed binary
 bypass:		disable littleboss, run the program directly`
 
 type ListenerFlag struct {
-	lb    *Littleboss
-	net   string
-	val   string
-	ln    net.Listener
-	f     *os.File // listener fd in children
-	usage string
+	lb  *Littleboss
+	net string
+	val string
+	ln  net.Listener
+	f   *os.File // listener fd in children
 }
 
 func (lnf *ListenerFlag) String() string {
-	if lnf.lb != nil && *lnf.lb.cmd == "child" {
+	if lnf.lb.mode != nil && *lnf.lb.mode == "child" {
 		if i := strings.LastIndex(lnf.val, ":fd:"); i >= 0 {
 			return lnf.val[:i]
 		}
@@ -137,9 +135,7 @@ func New(serviceName string) *Littleboss {
 	}
 
 	lb := &Littleboss{
-		FlagSet:   flag.CommandLine,
-		FlagName:  "littleboss",
-		FlagValue: "bypass",
+		FlagSet: flag.CommandLine,
 
 		FallbackOnFailure: false,
 		LameduckTimeout:   2 * time.Second,
@@ -162,13 +158,42 @@ func (lb *Littleboss) Listener(flagName, network, value, usage string) *Listener
 		panic("littleboss: cannot create Listener flag after calling Run")
 	}
 	lnf := &ListenerFlag{
-		lb:    lb,
-		val:   value,
-		net:   network,
-		usage: usage,
+		lb:  lb,
+		val: value,
+		net: network,
 	}
 	lb.lnFlags[flagName] = lnf
+	lb.FlagSet.Var(lnf, flagName, usage)
 	return lnf
+}
+
+// Command gives littleboss a custom command mode flag name and value.
+//
+// By default littleboss creates a flag named -littleboss when
+// Run is called, and sets its default value to "bypass".
+// If the FlagSet is going to be processed by a
+// non-standard flag package or the littleboss command mode
+// is not passed as a flag at all, then this Command method can
+// be used instead to avoid the flag creation.
+//
+// This makes it possible for a program to invoke flag parsing
+// itself, after calling New, Command, any calls to Listener,
+// but before the call to Run.
+//
+// For example:
+//
+//	lb := littleboss.New("myservice")
+//	lb.Command("-mylb", pflag.String("mylb", "start", "lb command mode"))
+//	pflag.CommandLine.AddGoFlagSet(flag.CommandLine)
+//	pflag.Parse()
+//	lb.Run(...)
+//
+// NOTE: All the flags passed to the child process are
+// extracted from Littleboss.FlagSet. Make sure any flags defined
+// by external flag packages have their value in the FlagSet.
+func (lb *Littleboss) Command(modeFlagName string, mode *string) {
+	lb.modeFlagName = modeFlagName
+	lb.mode = mode
 }
 
 // Run starts the little boss, with mainFn as the entry point to the serice.
@@ -178,20 +203,22 @@ func (lb *Littleboss) Run(mainFn func(ctx context.Context)) {
 		panic("littleboss: Run called multiple times")
 	}
 
-	if lb.FlagSet.Parsed() {
-		panic(fmt.Sprintf("littleboss: flags parsed before Run called"))
+	if lb.mode == nil {
+		if lb.FlagSet.Parsed() {
+			panic(fmt.Sprintf("littleboss: flags parsed before Run, but Command method not invoked"))
+		}
+		lb.modeFlagName = "littleboss"
+		lb.mode = lb.FlagSet.String(lb.modeFlagName, "bypass", fmt.Sprintf(usage, lb.name))
 	}
-	lb.cmd = lb.FlagSet.String(lb.FlagName, lb.FlagValue, fmt.Sprintf(usage, lb.name))
-	for flagName, lnf := range lb.lnFlags {
-		lb.FlagSet.Var(lnf, flagName, lnf.usage)
+	if !lb.FlagSet.Parsed() {
+		lb.FlagSet.Parse(os.Args[1:])
 	}
-	lb.FlagSet.Parse(os.Args[1:])
 
 	if lb.Logf == nil {
 		lb.Logf = func(format string, args ...interface{}) {} // do nothing
 	}
 
-	switch *lb.cmd {
+	switch *lb.mode {
 	case "stop":
 		lb.issueStop()
 	case "reload":
@@ -223,7 +250,7 @@ func (lb *Littleboss) Run(mainFn func(ctx context.Context)) {
 
 	lb.running = true
 
-	switch *lb.cmd {
+	switch *lb.mode {
 	case "bypass":
 		// Littleboss is not in use, run the program as if we weren't here.
 		mainFn(context.Background())
@@ -231,7 +258,7 @@ func (lb *Littleboss) Run(mainFn func(ctx context.Context)) {
 	case "start":
 		lb.startBoss()
 	default:
-		fmt.Fprintf(lb.stderr(), "%s: unknown littleboss command: %q\n\n", lb.cmdname, *lb.cmd)
+		fmt.Fprintf(lb.stderr(), "%s: unknown littleboss command: %q\n\n", lb.cmdname, *lb.mode)
 		lb.FlagSet.Usage()
 		os.Exit(2)
 	}
@@ -570,14 +597,14 @@ func (lb *Littleboss) collectFlags() (flags []string, extraFDs []*os.File) {
 		extraFDs = append(extraFDs, lnf.f)
 	}
 
-	flags = []string{"-littleboss=child"}
+	flags = []string{"-" + lb.modeFlagName + "=child"}
 
 	visitedLns := make(map[string]bool)
 	lb.FlagSet.Visit(func(f *flag.Flag) {
 		if lnf := lb.lnFlags[f.Name]; lnf != nil {
 			visitedLns[f.Name] = true
 			addLn(f, lnf)
-		} else if f.Name == "littleboss" {
+		} else if f.Name == lb.modeFlagName {
 			return // rewritten first
 		} else {
 			flags = append(flags, "-"+f.Name, f.Value.String())
@@ -744,7 +771,7 @@ func (lb *Littleboss) fatalf(format string, args ...interface{}) {
 }
 
 func (lb *Littleboss) isSupervisor() bool {
-	return lb.cmd != nil && *lb.cmd == "start"
+	return lb.mode != nil && *lb.mode == "start"
 }
 
 func (lb *Littleboss) exit(code int) {

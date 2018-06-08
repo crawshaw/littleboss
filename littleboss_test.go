@@ -18,6 +18,7 @@ import (
 	"time"
 
 	_ "crawshaw.io/littleboss"
+	_ "github.com/spf13/pflag"
 )
 
 const helloProgram = `package main
@@ -123,6 +124,7 @@ func TestStartStopReload(t *testing.T) {
 	const want = "hello\n"
 	conn, err := net.Dial("tcp", net.JoinHostPort("localhost", port))
 	if err != nil {
+		t.Logf("echo_sever output:\n%s", buf.String())
 		t.Fatalf("could not dial echo server: %v", err)
 	}
 	if _, err := io.WriteString(conn, want); err != nil {
@@ -204,6 +206,46 @@ func TestBlockingSIGINT(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "got lameduck signal, blocking") {
 		t.Errorf("output does not mention lameduck mode:\n%s", out)
+	}
+}
+
+const pflagSrc = `package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+
+	"crawshaw.io/littleboss"
+	"github.com/spf13/pflag"
+)
+
+func main() {
+	lb := littleboss.New("pflag")
+	lb.Persist = false
+	lb.Command("-mylb", pflag.String("mylb", "start", ""))
+	pflag.CommandLine.AddGoFlagSet(flag.CommandLine)
+	pflag.Parse()
+	lb.Run(func(ctx context.Context) {
+		fmt.Println("running pflag")
+	})
+}
+`
+
+func TestPFlag(t *testing.T) {
+	path := goBuild(t, "pflag", pflagSrc)
+	buf := new(bytes.Buffer)
+	cmd := exec.Command(path, "--mylb=start")
+	cmd.Stdout = buf
+	cmd.Stderr = buf
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("%v: %s", err, buf.Bytes())
+	}
+	cmd.Wait()
+
+	out := buf.String()
+	if !strings.Contains(out, "running pflag") {
+		t.Errorf("output does not mention pflag:\n%s", out)
 	}
 }
 
