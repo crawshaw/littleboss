@@ -9,6 +9,12 @@ a new binary.
 The supervisor can open sockets for you and share them across
 reloads of your program, ensuring no connections are dropped.
 
+You can install it with:
+
+```
+go get crawshaw.io/littleboss
+```
+
 Make a program use littleboss by modifying the main function:
 
 ```
