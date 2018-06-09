@@ -69,14 +69,15 @@ func httpMain(ctx context.Context, ln net.Listener) {
 		Handler:      blogHandler,
 	}
 	go func() {
-		<-ctx.Done()
-		srv.Shutdown(ctx)
-	}()
-	if err := srv.ServeTLS(ln, "certfile", "keyfile"); err != nil {
-		if err == http.ErrServerClosed {
-			return
+		if err := srv.ServeTLS(ln, "certfile", "keyfile"); err != nil {
+			if err == http.ErrServerClosed {
+				return
+			}
+			log.Fatal(err)
 		}
-		log.Fatal(err)
-	}
+	}()
+
+	<-ctx.Done()
+	srv.Shutdown(ctx)
 }
 ```
