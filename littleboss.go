@@ -47,7 +47,8 @@
 // the Run method to configure the supervisor.
 package littleboss
 
-// TODO status
+// TODO version both protocols
+// TODO document the parent<->child pipe protocol
 // TODO reload changing flags
 // TODO instrument supervisor
 // TODO bring child up before shutting down old binary
@@ -100,9 +101,8 @@ type Littleboss struct {
 	// Fields used by runChild and "status"/"stop"/"reload" handlers.
 	mu           sync.Mutex
 	childProcess *os.Process
-	childStart   time.Time
-	childEnd     time.Time
 	childPiper   *piper
+	status       status
 	stopSignal   chan int // exitCode
 }
 
@@ -242,7 +242,7 @@ func (lb *Littleboss) Run(mainFn func(ctx context.Context)) {
 	case "reload":
 		lb.issueReload()
 	case "status":
-		panic("TODO littleboss status")
+		lb.issueStatus()
 	case "child":
 		lb.child(mainFn)
 	}
@@ -349,6 +349,14 @@ func (lb *Littleboss) startBoss() {
 		lb.exit(exitCode)
 	}()
 
+	lb.mu.Lock()
+	lb.status = status{
+		BossStart: time.Now(),
+		BossPid:   os.Getpid(),
+		Listeners: make(map[string]string),
+	}
+	lb.mu.Unlock()
+
 	go lb.runChild(childPath)
 
 	for {
@@ -379,11 +387,25 @@ func (lb *Littleboss) handler(conn *net.UnixConn) {
 			lb.handleStop(w)
 		case "reload":
 			lb.handleReload(w, req)
+		case "status":
+			lb.handleStatus(w)
 		default:
 			lb.Logf("unknown ipc command: %q", req.Cmd)
 			return
 		}
 	}
+}
+
+func (lb *Littleboss) handleStatus(w *json.Encoder) {
+	lb.Logf("status requested")
+
+	lb.mu.Lock()
+	res := ipcRes{
+		Type:   "status",
+		Status: &lb.status,
+	}
+	w.Encode(res)
+	lb.mu.Unlock()
 }
 
 func (lb *Littleboss) handleReload(w *json.Encoder, req ipcReq) {
@@ -517,8 +539,19 @@ func (lb *Littleboss) runChild(childPath string) {
 			lb.mu.Lock()
 			stopSignal := lb.stopSignal
 			lb.childProcess = cmd.Process
-			lb.childStart = time.Now()
 			lb.childPiper = childPiper
+			lb.status.Path = childPath
+			lb.status.Args = flags
+			lb.status.ChildStart = time.Now()
+			lb.status.ChildPid = cmd.Process.Pid
+			for name := range lb.status.Listeners {
+				delete(lb.status.Listeners, name)
+			}
+			for name, lnf := range lb.lnFlags {
+				if lnf.ln != nil {
+					lb.status.Listeners[name] = lnf.ln.Addr().String()
+				}
+			}
 			lb.mu.Unlock()
 
 			if stopSignal != nil {
@@ -548,6 +581,10 @@ func (lb *Littleboss) runChild(childPath string) {
 				}
 			}
 
+			lb.mu.Lock()
+			lb.status.Reloads++
+			lb.mu.Unlock()
+
 			select {
 			case lb.reloadDone <- err:
 			default:
@@ -574,10 +611,12 @@ func (lb *Littleboss) runChild(childPath string) {
 
 		lb.mu.Lock()
 		lb.childProcess = nil
-		lb.childEnd = time.Now()
 		lb.childPiper = nil
 		stopSignal := lb.stopSignal
 		lb.stopSignal = nil
+		if err != nil {
+			lb.status.Failures++
+		}
 		lb.mu.Unlock()
 
 		if stopSignal != nil {
@@ -682,9 +721,22 @@ type ipcReq struct {
 }
 
 type ipcRes struct {
-	Type     string // "stopping", "stopped", "status", "reloading", "reloaded"
-	Error    string `json:",omitempty"`
-	ExitCode int    `json:",omitempty"`
+	Type     string  // "stopping", "stopped", "status", "reloading", "reloaded"
+	Error    string  `json:",omitempty"`
+	ExitCode int     `json:",omitempty"`
+	Status   *status `json:",omitempty"`
+}
+
+type status struct {
+	BossStart  time.Time
+	BossPid    int
+	ChildStart time.Time
+	ChildPid   int
+	Reloads    int
+	Failures   int
+	Path       string
+	Args       []string
+	Listeners  map[string]string // name -> addr
 }
 
 // issueStop sends a "stop" instruction to a running supervisor.
@@ -757,6 +809,47 @@ func (lb *Littleboss) issueReload() {
 			}
 		}
 	}
+}
+
+// issueStatus sends a "status" instruction to a running supervisor.
+func (lb *Littleboss) issueStatus() {
+	socketpath := filepath.Join(lb.socketdir(), lb.name+".socket")
+	conn, err := net.Dial("unix", socketpath)
+	if err != nil {
+		lb.fatalf("cannot connect to %s: %v", lb.name, err)
+	}
+	r := json.NewDecoder(conn)
+	w := json.NewEncoder(conn)
+
+	if err := w.Encode(ipcReq{Cmd: "status"}); err != nil {
+		lb.fatalf("ipc write error: %v", err)
+	}
+
+	var res ipcRes
+	if err := r.Decode(&res); err != nil {
+		lb.fatalf("ipc read error: %v", err)
+	}
+	if res.Type != "status" {
+		lb.fatalf("expected status, got %q\n", res.Type)
+	}
+	status := res.Status
+
+	bossStart := status.BossStart.Format("2006-01-02 15:04:05")
+	childStart := status.ChildStart.Format("2006-01-02 15:04:05")
+
+	fmt.Fprintf(os.Stdout, "littleboss: %s\n\n", lb.name)
+	fmt.Fprintf(os.Stdout, "boss  pid %d, started %s\n", status.BossPid, bossStart)
+	fmt.Fprintf(os.Stdout, "child pid %d, started %s, reloads %d, failures %d\n\n", status.ChildPid, childStart, status.Reloads, status.Failures)
+	fmt.Fprintf(os.Stdout, "command line:\n")
+	fmt.Fprintf(os.Stdout, "\t%s %s\n", status.Path, strings.Join(status.Args, " "))
+	if len(status.Listeners) > 0 {
+		fmt.Fprintf(os.Stdout, "\nlisteners:\n")
+		for name, addr := range status.Listeners {
+			fmt.Fprintf(os.Stdout, "\t%s:\t%s\n", name, addr)
+		}
+	}
+
+	os.Exit(0)
 }
 
 // child is executed in the child process.

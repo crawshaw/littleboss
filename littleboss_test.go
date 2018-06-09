@@ -175,6 +175,25 @@ func TestStartStopReload(t *testing.T) {
 		}
 	}
 
+	if output, err := exec.Command(echoPath, "-littleboss=status").CombinedOutput(); err != nil {
+		t.Fatalf("status failed: %v: %s\necho_server output:\n%s", err, output, buf.Bytes())
+	} else {
+		out := string(output)
+		if !strings.Contains(out, port) {
+			t.Errorf("status does not mention port %q", port)
+		}
+		if !strings.Contains(out, "reloads 1") {
+			t.Errorf("status does not mention reload")
+		}
+		if !strings.Contains(out, echoPath) {
+			t.Errorf("status does not mention path %q", echoPath)
+		}
+
+		if t.Failed() {
+			t.Logf("status output: %s", out)
+		}
+	}
+
 	output, err := exec.Command(echoPath, "-littleboss=stop").CombinedOutput()
 	if err != nil {
 		t.Fatalf("stop failed: %v: %s\necho_server output:\n%s", err, output, buf.Bytes())
