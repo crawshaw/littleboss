@@ -39,6 +39,7 @@ const helloProgram = `package main
 
 import (
 	"context"
+	"time"
 
 	"crawshaw.io/littleboss"
 )
@@ -46,7 +47,19 @@ import (
 func main() {
 	lb := littleboss.New("hello_program")
 	lb.SupervisorInit = func() { panic("not called in bypass") }
-	lb.Run(func(context.Context) { println("hello, from littleboss.") })
+	flagAddr := lb.Listener("addr", "tcp", ":0", "")
+	lb.Run(func(context.Context) {
+		ln := flagAddr.Listener()
+		go func() {
+			time.Sleep(10*time.Millisecond)
+			ln.Close()
+		}()
+		// ln.Accept releases on ln.Close, unless an *os.File has been
+		// extracted from the listener. This should not happen in
+		// bypass mode.
+		ln.Accept()
+		println("hello, from littleboss.")
+	})
 }
 `
 

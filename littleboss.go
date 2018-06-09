@@ -249,15 +249,17 @@ func (lb *Littleboss) Run(mainFn func(ctx context.Context)) {
 			fmt.Fprintf(lb.stderr(), "%s: -%s: %v\n", lb.cmdname, name, err)
 			os.Exit(1)
 		}
-		switch ln := ln.(type) {
-		case *net.TCPListener:
-			f, err := ln.File()
-			if err != nil {
-				lb.fatalf("could not get TCP listener fd: %v", err)
+		if *lb.mode == "start" {
+			switch ln := ln.(type) {
+			case *net.TCPListener:
+				f, err := ln.File()
+				if err != nil {
+					lb.fatalf("could not get TCP listener fd: %v", err)
+				}
+				lnf.f = f
+			default:
+				lb.fatalf("unsupported listener type: %T", ln)
 			}
-			lnf.f = f
-		default:
-			lb.fatalf("unsupported listener type: %T", ln)
 		}
 		lnf.ln = ln
 	}
