@@ -346,6 +346,91 @@ func TestReloadFailure(t *testing.T) {
 	}
 }
 
+const listenerSrc = `package main
+
+import (
+	"context"
+	"fmt"
+
+	"crawshaw.io/littleboss"
+)
+
+func main() {
+	lb := littleboss.New("listener")
+	addr0 := lb.Listener("addr0", "tcp", ":0", "")
+	addr1 := lb.Listener("addr1", "tcp", ":0", "")
+	addr2 := lb.Listener("addr2", "tcp", ":0", "")
+	addr3 := lb.Listener("addr3", "tcp", "", "")
+	addr4 := lb.Listener("addr4", "tcp", "", "")
+	addr5 := lb.Listener("addr5", "tcp", "", "")
+	lb.Run(func(ctx context.Context) {
+		lnstr := func(lnf *littleboss.ListenerFlag) string {
+			ln := lnf.Listener()
+			if ln == nil {
+				return "nil"
+			}
+			return ln.Addr().String()
+		}
+		fmt.Println("addr0=", lnstr(addr0))
+		fmt.Println("addr1=", lnstr(addr1))
+		fmt.Println("addr2=", lnstr(addr2))
+		fmt.Println("addr3=", lnstr(addr3))
+		fmt.Println("addr4=", lnstr(addr4))
+		fmt.Println("addr5=", lnstr(addr5))
+	})
+}
+`
+
+func TestListenerFlag(t *testing.T) {
+	isAddr := func(line string) bool {
+		i := strings.Index(line, "=")
+		return i == 5 && line[i+2:] != "" && line[i+2:] != "nil"
+	}
+	isNil := func(line string) bool {
+		i := strings.Index(line, "=")
+		return i == 5 && line[i+2:] == "nil"
+	}
+
+	listener := goBuild(t, "listener", listenerSrc)
+
+	testLns := func(t *testing.T, lbFlag string) {
+		cmd := exec.Command(listener, "-addr1=:0", "-addr2=", "-addr3=", "-addr4=:0", lbFlag)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("%v: %s\n%s", err, stdout.String(), stderr.String())
+		}
+		output := stdout.String()
+		t.Logf("%s:\n%s", lbFlag, output)
+		addrs := strings.Split(strings.TrimSpace(output), "\n")
+		if len(addrs) != 6 {
+			t.Fatalf("want 6 addrs, got %d:\n%s", len(addrs), output)
+		}
+		if !isAddr(addrs[0]) {
+			t.Errorf("%s, want addr", addrs[0])
+		}
+		if !isAddr(addrs[1]) {
+			t.Errorf("%s, want addr", addrs[1])
+		}
+		if !isNil(addrs[2]) {
+			t.Errorf("%s, want nil", addrs[2])
+		}
+		if !isNil(addrs[3]) {
+			t.Errorf("%s, want nil", addrs[3])
+		}
+		if !isAddr(addrs[4]) {
+			t.Errorf("%s, want addr", addrs[4])
+		}
+		if !isNil(addrs[5]) {
+			t.Errorf("%s, want nil", addrs[5])
+		}
+	}
+
+	t.Run("-littleboss=start", func(t *testing.T) { testLns(t, "-littleboss=start") })
+	t.Run("-littleboss=bypass", func(t *testing.T) { testLns(t, "-littleboss=bypass") })
+}
+
 var tempdir string
 
 func TestMain(m *testing.M) {

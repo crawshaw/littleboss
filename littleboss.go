@@ -114,6 +114,10 @@ status:		print statistics about the running littleboss
 reload:		restart the managed process using the executed binary
 bypass:		disable littleboss, run the program directly`
 
+// A ListenerFlag is a flag whose value is used as a net.Listener address.
+//
+// An empty "" value means no listener is created.
+// For a listener on a random port, use ":0".
 type ListenerFlag struct {
 	lb  *Littleboss
 	net string
@@ -244,6 +248,9 @@ func (lb *Littleboss) Run(mainFn func(ctx context.Context)) {
 	}
 
 	for name, lnf := range lb.lnFlags {
+		if lnf.val == "" {
+			continue
+		}
 		ln, err := net.Listen(lnf.net, lnf.val)
 		if err != nil {
 			fmt.Fprintf(lb.stderr(), "%s: -%s: %v\n", lb.cmdname, name, err)
@@ -634,7 +641,14 @@ func (lb *Littleboss) collectFlags() (flags []string, extraFDs []*os.File) {
 	lb.FlagSet.Visit(func(f *flag.Flag) {
 		if lnf := lb.lnFlags[f.Name]; lnf != nil {
 			visitedLns[f.Name] = true
-			addLn(f, lnf)
+			if lnf.ln == nil {
+				// Listener is disabled. We pass the flag,
+				// as the value is non-default, but do not
+				// pass an FD.
+				flags = append(flags, "-"+f.Name, "")
+			} else {
+				addLn(f, lnf)
+			}
 		} else if f.Name == lb.modeFlagName {
 			return // rewritten first
 		} else {
@@ -652,7 +666,11 @@ func (lb *Littleboss) collectFlags() (flags []string, extraFDs []*os.File) {
 	}
 	sort.Strings(extraLnFlags)
 	for _, name := range extraLnFlags {
-		addLn(lb.FlagSet.Lookup(name), lb.lnFlags[name])
+		lnf := lb.lnFlags[name]
+		if lnf.ln == nil {
+			continue
+		}
+		addLn(lb.FlagSet.Lookup(name), lnf)
 	}
 
 	return flags, extraFDs
@@ -748,6 +766,9 @@ func (lb *Littleboss) child(mainFn func(ctx context.Context)) {
 	// We are in the child process.
 	lb.running = true
 	for name, lnf := range lb.lnFlags {
+		if lnf.val == "" {
+			continue
+		}
 		i := strings.LastIndex(lnf.val, ":fd:")
 		if i < 0 {
 			panic(fmt.Sprintf("littleboss: child listener flag %q value does not include fd: %q", name, lnf.val))
