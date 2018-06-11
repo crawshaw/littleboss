@@ -17,7 +17,7 @@ go get crawshaw.io/littleboss
 
 Make a program use littleboss by modifying the main function:
 
-```
+```go
 func main() {
 	lb := littleboss.New("service-name")
 	lb.Run(func(ctx context.Context) {
@@ -52,7 +52,7 @@ and specifying exactly what flags control and are passed by littleboss.
 
 ## An HTTP server example
 
-```
+```go
 func main() {
 	lb := littleboss.New("myblog")
 	flagHTTPS := lb.Listener("https", "tcp", ":443", "address")
