@@ -670,7 +670,7 @@ func (lb *Littleboss) runChild(childPath string) {
 func (lb *Littleboss) collectFlags() (flags []string, extraFDs []*os.File) {
 	addLn := func(f *flag.Flag, lnf *ListenerFlag) {
 		// 0 stdin, 1 stdout, 2 stderr, 3 bossPipeR, 4 bossPipeW, 5+ listeners
-		flags = append(flags, "-"+f.Name, fmt.Sprintf("%s:fd:%d", f.Value, 5+len(extraFDs)))
+		flags = append(flags, fmt.Sprintf("-%s=%s:fd:%d", f.Name, f.Value, 5+len(extraFDs)))
 		extraFDs = append(extraFDs, lnf.f)
 	}
 
@@ -684,14 +684,14 @@ func (lb *Littleboss) collectFlags() (flags []string, extraFDs []*os.File) {
 				// Listener is disabled. We pass the flag,
 				// as the value is non-default, but do not
 				// pass an FD.
-				flags = append(flags, "-"+f.Name, "")
+				flags = append(flags, "-"+f.Name+"=")
 			} else {
 				addLn(f, lnf)
 			}
 		} else if f.Name == lb.modeFlagName {
 			return // rewritten first
 		} else {
-			flags = append(flags, "-"+f.Name, f.Value.String())
+			flags = append(flags, "-"+f.Name+"="+f.Value.String())
 		}
 	})
 

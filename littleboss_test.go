@@ -369,10 +369,13 @@ const listenerSrc = `package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 
 	"crawshaw.io/littleboss"
 )
+
+var flagAbool = flag.Bool("abool", false, "a boolean flag, don't pass -abool true")
 
 func main() {
 	lb := littleboss.New("listener")
@@ -413,7 +416,7 @@ func TestListenerFlag(t *testing.T) {
 	listener := goBuild(t, "listener", listenerSrc)
 
 	testLns := func(t *testing.T, lbFlag string) {
-		cmd := exec.Command(listener, "-addr1=:0", "-addr2=", "-addr3=", "-addr4=:0", lbFlag)
+		cmd := exec.Command(listener, "-abool", "-addr1=:0", "-addr2=", "-addr3=", "-addr4=:0", lbFlag)
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
