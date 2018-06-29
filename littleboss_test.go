@@ -80,6 +80,11 @@ func TestBypass(t *testing.T) {
 	if got, want := string(output), "hello, from littleboss.\n"; got != want {
 		t.Errorf("hello -littleboss=bypass = %q, want %q", got, want)
 	}
+
+	output, err = exec.Command(helloPath, "-h").CombinedOutput()
+	if got, substrWant := string(output), "-addr"; !strings.Contains(got, substrWant) {
+		t.Errorf("output = %q, want it to contain %q (err=%v)", got, substrWant, err)
+	}
 }
 
 const echoServer = `package main

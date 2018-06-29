@@ -127,7 +127,7 @@ type ListenerFlag struct {
 }
 
 func (lnf *ListenerFlag) String() string {
-	if lnf.lb.mode != nil && *lnf.lb.mode == "child" {
+	if lnf.lb != nil && lnf.lb.mode != nil && *lnf.lb.mode == "child" {
 		if i := strings.LastIndex(lnf.val, ":fd:"); i >= 0 {
 			return lnf.val[:i]
 		}
