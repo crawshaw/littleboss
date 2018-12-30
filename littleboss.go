@@ -21,7 +21,7 @@
 // Make a program use littleboss by modifying the main function:
 //
 //	func main() {
-//		lb := littlebosss.New("service-name")
+//		lb := littleboss.New("service-name")
 //		lb.Run(func(ctx context.Context) {
 //			// main goes here, exit when <-ctx.Done()
 //		})
@@ -214,7 +214,7 @@ func (lb *Littleboss) Command(modeFlagName string, mode *string) {
 	lb.mode = mode
 }
 
-// Run starts the little boss, with mainFn as the entry point to the serice.
+// Run starts the little boss, with mainFn as the entry point to the service.
 // Run does not return.
 func (lb *Littleboss) Run(mainFn func(ctx context.Context)) {
 	if lb.running {
