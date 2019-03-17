@@ -57,6 +57,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -114,15 +115,16 @@ status:		print statistics about the running littleboss
 reload:		restart the managed process using the executed binary
 bypass:		disable littleboss, run the program directly`
 
-// A ListenerFlag is a flag whose value is used as a net.Listener address.
+// A ListenerFlag is a flag whose value is used as a net.Listener or net.PacketConn.
 //
-// An empty "" value means no listener is created.
+// An empty flag value ("") means no listener is created.
 // For a listener on a random port, use ":0".
 type ListenerFlag struct {
 	lb  *Littleboss
 	net string
 	val string
 	ln  net.Listener
+	pc  net.PacketConn
 	f   *os.File // listener fd in children
 }
 
@@ -135,8 +137,9 @@ func (lnf *ListenerFlag) String() string {
 	return lnf.val
 }
 
-func (lnf *ListenerFlag) Network() string        { return lnf.net }
-func (lnf *ListenerFlag) Listener() net.Listener { return lnf.ln }
+func (lnf *ListenerFlag) Network() string            { return lnf.net }
+func (lnf *ListenerFlag) Listener() net.Listener     { return lnf.ln }
+func (lnf *ListenerFlag) PacketConn() net.PacketConn { return lnf.pc }
 func (lnf *ListenerFlag) Set(value string) error {
 	lnf.val = value
 	return nil
@@ -251,24 +254,52 @@ func (lb *Littleboss) Run(mainFn func(ctx context.Context)) {
 		if lnf.val == "" {
 			continue
 		}
-		ln, err := net.Listen(lnf.net, lnf.val)
+		var ln net.Listener
+		var pc net.PacketConn
+		var err error
+		if strings.HasPrefix(lnf.val, "fd:") {
+			fd, err := strconv.Atoi(lnf.val[7:])
+			if err != nil {
+				fmt.Fprintf(lb.stderr(), "%s: -%s: invalid fd number: %v\n", lb.cmdname, name, err)
+				os.Exit(1)
+			}
+			f := os.NewFile(uintptr(fd), name)
+			if strings.HasPrefix(lnf.val, "fd:udp:") {
+				pc, err = net.FilePacketConn(f)
+			} else if strings.HasPrefix(lnf.val, "fd:tcp:") {
+				ln, err = net.FileListener(f)
+			} else {
+				fmt.Fprintf(lb.stderr(), "%s: -%s: unknown fd type: %s\n", lb.cmdname, name, lnf.val)
+				os.Exit(1)
+			}
+		} else if strings.HasPrefix(lnf.net, "udp") || strings.HasPrefix(lnf.net, "ip") {
+			pc, err = net.ListenPacket(lnf.net, lnf.val)
+		} else {
+			ln, err = net.Listen(lnf.net, lnf.val)
+		}
 		if err != nil {
 			fmt.Fprintf(lb.stderr(), "%s: -%s: %v\n", lb.cmdname, name, err)
 			os.Exit(1)
 		}
 		if *lb.mode == "start" {
-			switch ln := ln.(type) {
-			case *net.TCPListener:
-				f, err := ln.File()
+			if tcpsrc, _ := ln.(*net.TCPListener); ln != nil {
+				f, err := tcpsrc.File()
 				if err != nil {
 					lb.fatalf("could not get TCP listener fd: %v", err)
 				}
 				lnf.f = f
-			default:
-				lb.fatalf("unsupported listener type: %T", ln)
+			} else if udpsrc, _ := pc.(*net.UDPConn); pc != nil {
+				f, err := udpsrc.File()
+				if err != nil {
+					lb.fatalf("could not get UDP fd: %v", err)
+				}
+				lnf.f = f
+			} else {
+				lb.fatalf("unsupported listener type: %T/%T", ln, pc)
 			}
 		}
 		lnf.ln = ln
+		lnf.pc = pc
 	}
 
 	lb.running = true
@@ -550,6 +581,8 @@ func (lb *Littleboss) runChild(childPath string) {
 			for name, lnf := range lb.lnFlags {
 				if lnf.ln != nil {
 					lb.status.Listeners[name] = lnf.ln.Addr().String()
+				} else if lnf.pc != nil {
+					lb.status.Listeners[name] = lnf.pc.LocalAddr().String()
 				}
 			}
 			lb.mu.Unlock()
@@ -669,8 +702,9 @@ func (lb *Littleboss) runChild(childPath string) {
 
 func (lb *Littleboss) collectFlags() (flags []string, extraFDs []*os.File) {
 	addLn := func(f *flag.Flag, lnf *ListenerFlag) {
+		net := lnf.net[:3]
 		// 0 stdin, 1 stdout, 2 stderr, 3 bossPipeR, 4 bossPipeW, 5+ listeners
-		flags = append(flags, fmt.Sprintf("-%s=%s:fd:%d", f.Name, f.Value, 5+len(extraFDs)))
+		flags = append(flags, fmt.Sprintf("-%s=%s:fd:%s:%d", f.Name, f.Value, net, 5+len(extraFDs)))
 		extraFDs = append(extraFDs, lnf.f)
 	}
 
@@ -680,7 +714,7 @@ func (lb *Littleboss) collectFlags() (flags []string, extraFDs []*os.File) {
 	lb.FlagSet.Visit(func(f *flag.Flag) {
 		if lnf := lb.lnFlags[f.Name]; lnf != nil {
 			visitedLns[f.Name] = true
-			if lnf.ln == nil {
+			if lnf.ln == nil && lnf.pc == nil {
 				// Listener is disabled. We pass the flag,
 				// as the value is non-default, but do not
 				// pass an FD.
@@ -706,7 +740,7 @@ func (lb *Littleboss) collectFlags() (flags []string, extraFDs []*os.File) {
 	sort.Strings(extraLnFlags)
 	for _, name := range extraLnFlags {
 		lnf := lb.lnFlags[name]
-		if lnf.ln == nil {
+		if lnf.ln == nil && lnf.pc == nil {
 			continue
 		}
 		addLn(lb.FlagSet.Lookup(name), lnf)
@@ -866,12 +900,22 @@ func (lb *Littleboss) child(mainFn func(ctx context.Context)) {
 		if i < 0 {
 			panic(fmt.Sprintf("littleboss: child listener flag %q value does not include fd: %q", name, lnf.val))
 		}
-		fd, err := strconv.Atoi(lnf.val[i+len(":fd:"):])
+		i += len(":fd:")
+		end := strings.LastIndexByte(lnf.val[i:], ':')
+		network := lnf.val[i : i+end]
+		fd, err := strconv.Atoi(lnf.val[i+end+1:])
 		if err != nil {
 			panic(fmt.Sprintf("littleboss: child listener flag %q bad value: %q: %v", name, lnf.val, err))
 		}
 		lnf.f = os.NewFile(uintptr(fd), name)
-		lnf.ln, err = net.FileListener(lnf.f)
+		switch {
+		case strings.HasPrefix(network, "tcp"):
+			lnf.ln, err = net.FileListener(lnf.f)
+		case strings.HasPrefix(network, "udp"), strings.HasPrefix(network, "ip"):
+			lnf.pc, err = net.FilePacketConn(lnf.f)
+		default:
+			err = errors.New("unknown network type")
+		}
 		if err != nil {
 			panic(fmt.Sprintf("littleboss: child listener flag %q (%q) is no good: %v", name, lnf.val, err))
 		}

@@ -390,13 +390,16 @@ func main() {
 	addr3 := lb.Listener("addr3", "tcp", "", "")
 	addr4 := lb.Listener("addr4", "tcp", "", "")
 	addr5 := lb.Listener("addr5", "tcp", "", "")
+	addr6 := lb.Listener("addr6", "udp", "", "")
+	addr7 := lb.Listener("addr7", "udp4", ":5354", "")
 	lb.Run(func(ctx context.Context) {
 		lnstr := func(lnf *littleboss.ListenerFlag) string {
-			ln := lnf.Listener()
-			if ln == nil {
-				return "nil"
+			if ln := lnf.Listener(); ln != nil {
+				return ln.Addr().String()
+			} else if pc := lnf.PacketConn(); pc != nil {
+				return pc.LocalAddr().String()
 			}
-			return ln.Addr().String()
+			return "nil"
 		}
 		fmt.Println("addr0=", lnstr(addr0))
 		fmt.Println("addr1=", lnstr(addr1))
@@ -404,11 +407,14 @@ func main() {
 		fmt.Println("addr3=", lnstr(addr3))
 		fmt.Println("addr4=", lnstr(addr4))
 		fmt.Println("addr5=", lnstr(addr5))
+		fmt.Println("addr6=", lnstr(addr6))
+		fmt.Println("addr7=", lnstr(addr7))
 	})
 }
 `
 
 func TestListenerFlag(t *testing.T) {
+	const addrCount = 8
 	isAddr := func(line string) bool {
 		i := strings.Index(line, "=")
 		return i == 5 && line[i+2:] != "" && line[i+2:] != "nil"
@@ -431,8 +437,8 @@ func TestListenerFlag(t *testing.T) {
 		output := stdout.String()
 		t.Logf("%s:\n%s", lbFlag, output)
 		addrs := strings.Split(strings.TrimSpace(output), "\n")
-		if len(addrs) != 6 {
-			t.Fatalf("want 6 addrs, got %d:\n%s", len(addrs), output)
+		if len(addrs) != addrCount {
+			t.Fatalf("want %d addrs, got %d:\n%s", addrCount, len(addrs), output)
 		}
 		if !isAddr(addrs[0]) {
 			t.Errorf("%s, want addr", addrs[0])
@@ -451,6 +457,12 @@ func TestListenerFlag(t *testing.T) {
 		}
 		if !isNil(addrs[5]) {
 			t.Errorf("%s, want nil", addrs[5])
+		}
+		if !isNil(addrs[6]) {
+			t.Errorf("%s, want nil", addrs[6])
+		}
+		if !isAddr(addrs[7]) {
+			t.Errorf("%s, want addr", addrs[7])
 		}
 	}
 
