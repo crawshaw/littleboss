@@ -284,15 +284,15 @@ func main() {
 `
 
 func TestPFlag(t *testing.T) {
+	t.Skip("pflag is broken, see Issue #11")
 	path := goBuild(t, "pflag", pflagSrc)
 	buf := new(bytes.Buffer)
 	cmd := exec.Command(path, "--mylb=start")
 	cmd.Stdout = buf
 	cmd.Stderr = buf
-	if err := cmd.Start(); err != nil {
+	if err := cmd.Run(); err != nil {
 		t.Fatalf("%v: %s", err, buf.Bytes())
 	}
-	cmd.Wait()
 
 	out := buf.String()
 	if !strings.Contains(out, "running pflag") {
