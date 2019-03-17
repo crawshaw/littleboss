@@ -470,6 +470,62 @@ func TestListenerFlag(t *testing.T) {
 	t.Run("-littleboss=bypass", func(t *testing.T) { testLns(t, "-littleboss=bypass") })
 }
 
+const oneListenSrc = `package main
+
+import (
+	"context"
+	"fmt"
+
+	"crawshaw.io/littleboss"
+)
+
+func main() {
+	lb := littleboss.New("listener")
+	addr := lb.Listener("addr", "tcp", ":0", "")
+	lb.Run(func(ctx context.Context) {
+		ln := addr.Listener()
+		if ln == nil {
+			fmt.Println("addr=nil")
+		} else {
+			fmt.Println("addr=", ln.Addr().String())
+		}
+	})
+}
+`
+
+func TestListenerFlagFD(t *testing.T) {
+	listener := goBuild(t, "listener", oneListenSrc)
+
+	testLns := func(t *testing.T, lbFlag string) {
+		ln, err := net.Listen("tcp", ":0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		lnf, err := ln.(*net.TCPListener).File()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		cmd := exec.Command(listener, "-addr=fd:tcp:3")
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		cmd.ExtraFiles = []*os.File{lnf}
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("%v: %s\n%s", err, stdout.String(), stderr.String())
+		}
+		output := stdout.String()
+		t.Logf("%s:\n%s", lbFlag, output)
+		got := strings.TrimSpace(strings.TrimPrefix(output, "addr= "))
+		if want := ln.Addr().String(); got != want {
+			t.Errorf("addr=%q, want %q", got, want)
+		}
+	}
+
+	t.Run("-littleboss=start", func(t *testing.T) { testLns(t, "-littleboss=start") })
+	t.Run("-littleboss=bypass", func(t *testing.T) { testLns(t, "-littleboss=bypass") })
+}
+
 var tempdir string
 
 func TestMain(m *testing.M) {
