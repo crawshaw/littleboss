@@ -272,26 +272,29 @@ func (lb *Littleboss) Run(mainFn func(ctx context.Context)) {
 				fmt.Fprintf(lb.stderr(), "%s: -%s: unknown fd type: %s\n", lb.cmdname, name, lnf.val)
 				os.Exit(1)
 			}
-		} else if strings.HasPrefix(lnf.net, "udp") || strings.HasPrefix(lnf.net, "ip") {
-			pc, err = net.ListenPacket(lnf.net, lnf.val)
-		} else {
+		} else if strings.HasPrefix(lnf.net, "tcp") {
 			ln, err = net.Listen(lnf.net, lnf.val)
+		} else {
+			pc, err = net.ListenPacket(lnf.net, lnf.val)
 		}
 		if err != nil {
 			fmt.Fprintf(lb.stderr(), "%s: -%s: %v\n", lb.cmdname, name, err)
 			os.Exit(1)
 		}
 		if *lb.mode == "start" {
-			if tcpsrc, _ := ln.(*net.TCPListener); ln != nil {
-				f, err := tcpsrc.File()
+			type fileSource interface {
+				File() (*os.File, error)
+			}
+			if src, _ := ln.(fileSource); ln != nil {
+				f, err := src.File()
 				if err != nil {
 					lb.fatalf("could not get TCP listener fd: %v", err)
 				}
 				lnf.f = f
-			} else if udpsrc, _ := pc.(*net.UDPConn); pc != nil {
-				f, err := udpsrc.File()
+			} else if src, _ := pc.(fileSource); pc != nil {
+				f, err := src.File()
 				if err != nil {
-					lb.fatalf("could not get UDP fd: %v", err)
+					lb.fatalf("could not get packet conn fd: %v", err)
 				}
 				lnf.f = f
 			} else {
